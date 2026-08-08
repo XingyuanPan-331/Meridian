@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { FocusCardV2, type FocusCardV2Data, type FcV2Phase, type FcV2Type } from "@/components/today/FocusCardV2";
 
@@ -425,15 +425,6 @@ export default function TodayPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
-  // BUG-20260808-055：操作/刷新失败提示（非破坏性）——失败不再整页崩溃清空清单
-  const [opMsg, setOpMsg] = useState<string | null>(null);
-  const dataRef = useRef<TodayResponse | null>(null);
-  const loadSeq = useRef(0); // BUG-20260808-055：load 竞态防护序列号
-  const applyData = useCallback((d: TodayResponse | null) => { dataRef.current = d; setData(d); }, []);
-  const failToast = useCallback((msg = "操作失败，请重试") => {
-    setOpMsg(msg);
-    setTimeout(() => setOpMsg(null), 2600);
-  }, []);
 
   // 收尾批次 C：项目树缓存（页面级 fetch 一次，不随卡片刷新重复请求）
   const [treeCache, setTreeCache] = useState<ProjTreeNode[]>([]);
@@ -445,38 +436,16 @@ export default function TodayPage() {
   }, []);
 
   const load = useCallback(async () => {
-    // BUG-20260808-055：并发 load 竞态防护——出发/勾选/新增等操作各自触发 load()，
-    // Neon 慢（10-16s）时先发起的旧请求后返回，会覆盖新状态（乐观新增项消失）。
-    // 序列号：只应用最后一次发起的 load 结果。
-    const seq = ++loadSeq.current;
     setLoading(true);
     setError(false);
     try {
-      // BUG-20260808-055：fetch 加 25s 超时——Neon 跨洋慢/连接池占用时避免永久挂起
-      // （勾选后 load 挂起 → loading 恒 true → 主卡消失，用户误以为"清单被清空"）
-      // 重试 1 次：Neon pooled 端点曾实测间歇性连接失败（Can't reach database server）→ 500。
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 25_000);
-        try {
-          const r = await fetch("/api/views/today", { signal: ctrl.signal });
-          if (!r.ok) throw new Error();
-          const d = await r.json();
-          if (seq === loadSeq.current) applyData(d);
-          clearTimeout(timer);
-          break;
-        } catch (err) {
-          clearTimeout(timer);
-          if (attempt === 0) { await new Promise((res) => setTimeout(res, 2000)); continue; }
-          // BUG-20260808-055：刷新失败保留已有数据（清单不消失）；仅首次加载（无数据）才进 error 态
-          if (seq === loadSeq.current) {
-            if (!dataRef.current) setError(true);
-            else failToast("刷新失败，已显示上次数据");
-          }
-        }
-      }
-    } finally { if (seq === loadSeq.current) setLoading(false); }
-  }, [applyData, failToast]);
+      const r = await fetch("/api/views/today");
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      setData(d);
+    } catch { setError(true); }
+    finally { setLoading(false); }
+  }, []);
   useEffect(() => { load(); }, [load]);
 
   // Bug 修复：档案面板删除/移出完成等变更 → 今日卡片/路线实时刷新
@@ -499,9 +468,9 @@ export default function TodayPage() {
       // currentTask 为空时 mustDo 兜底卡（学习型等无排期任务）永不显示。
       if (action === "complete") setRouteSel(null);
       await load();
-    } catch { failToast(); }
+    } catch { setError(true); }
     finally { setBusy(false); }
-  }, [load, failToast]);
+  }, [load]);
 
   // 收尾批次 A2：明天继续（复制最近排期时段到明天 · Focus Card 次级按钮）
   const [contToast, setContToast] = useState<string | null>(null);
@@ -532,9 +501,9 @@ export default function TodayPage() {
       });
       if (!r.ok) throw new Error("打卡失败");
       await load();
-    } catch { failToast("打卡失败，请重试"); }
+    } catch { setError(true); }
     finally { setBusy(false); }
-  }, [load, failToast]);
+  }, [load]);
 
   // 保存状态
   const saveState = useCallback(async (data: Record<string, string>) => {
@@ -558,22 +527,15 @@ export default function TodayPage() {
       });
       if (!r.ok) throw new Error("采纳失败");
       await load();
-    } catch { failToast("采纳失败，请重试"); }
+    } catch { setError(true); }
     finally { setBusy(false); }
-  }, [load, failToast]);
+  }, [load]);
 
   // P1-11：清单新增项（乐观更新 → POST /api/tasks 建子任务 → 刷新落库）
   const addChildItem = useCallback(async (parentId: string, title: string) => {
     const tmp: { id: string; text: string; done: boolean } = { id: `tmp-${Date.now()}`, text: title, done: false };
-    // BUG-20260808-055：乐观更新前递增 loadSeq——使在途的旧 load（如勾选/出发触发的慢请求）
-    // 返回时失效（seq 不匹配被忽略），防止其覆盖乐观新增项（"补充风险清单"瞬现瞬消）。
-    loadSeq.current++;
     // 乐观：立即出现在清单（仅当前任务卡可本地写；mustDo 兜底卡无 children 源则跳过）
-    setData((prev) => {
-      const next = prev?.currentTask ? { ...prev, currentTask: { ...prev.currentTask, children: [...(prev.currentTask.children ?? []), tmp] } } : prev;
-      dataRef.current = next; // 同步 ref（load 失败判断用）
-      return next;
-    });
+    setData((prev) => (prev?.currentTask ? { ...prev, currentTask: { ...prev.currentTask, children: [...(prev.currentTask.children ?? []), tmp] } } : prev));
     try {
       const r = await fetch("/api/tasks", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -582,10 +544,10 @@ export default function TodayPage() {
       if (!r.ok) throw new Error("创建失败");
       await load();
     } catch {
-      failToast("创建失败，请重试");
+      setError(true);
       await load(); // 回滚乐观项
     }
-  }, [load, failToast]);
+  }, [load]);
 
   // 保存备注（Focus Card → 任务 description）
   const saveNote = useCallback(async (taskId: string, note: string) => {
@@ -629,9 +591,9 @@ export default function TodayPage() {
       });
       if (!r.ok) throw new Error("操作失败");
       await load();
-    } catch { failToast(); }
+    } catch { setError(true); }
     finally { setBusy(false); }
-  }, [data, routeSelTask, load, failToast]);
+  }, [data, routeSelTask, load]);
 
   // BUG-20260807-046：data（load 结果）变化时同步刷新 routeSelTask——否则勾选/新增子项后
   // 前置卡清单停留在点击时的旧快照（新增项不出现、勾选态不更新）。
@@ -651,10 +613,6 @@ export default function TodayPage() {
   const cards = useCallback((): { card: FocusCard; tagLabel: string; statText: string; hint: string; cardV2: FocusCardV2Data }[] => {
     if (!data) return [];
     const list: { card: FocusCard; tagLabel: string; statText: string; hint: string; cardV2: FocusCardV2Data }[] = [];
-    // BUG-20260808-056：卡片列表按任务 id 去重——routeSel 前置卡与 currentTask/mustDo 兜底卡
-    // 可能指向同一任务（如点击今日路线的采购元器件且 currentTask=null → mustDo[0] 同任务），
-    // 两张同 id 卡导致 React key 冲突（"Encountered two children with the same key"）。
-    const seen = new Set<string>();
     const curId = data.currentTask?.id ?? null;
     // 路线选中（非当前任务）→ 前置该任务的基础卡（含提前执行语义）
     if (routeSel && routeSel !== curId) {
@@ -679,36 +637,26 @@ export default function TodayPage() {
         } as CurrentTask;
         const v2 = toCardV2(normBase, treeCache);
         const tagLabel = v2.type === "learning" ? "学习型" : v2.type === "timer" ? "时间型" : v2.type === "accum-daily" || v2.type === "accum-weekly" ? "积累型" : "清单型";
-        if (!seen.has(tl.taskId)) {
-          seen.add(tl.taskId);
-          list.push({
-            card: {
-              id: tl.taskId, parent: "今日路线", title: tl.title,
-              type: v2.type === "accum-daily" || v2.type === "accum-weekly" ? "accumulate" : v2.type,
-              plannedMinutes: 0, doneCount: v2.items?.filter((i) => i.done).length ?? 0, totalCount: v2.items?.length || 1,
-              progress: v2.progress, elapsedMinutes: 0, items: v2.items ?? [], aiExec: "",
-            },
-            tagLabel, statText: "待开始", hint: "提前执行 · 点「出发」开始计时",
-            cardV2: v2,
-          });
-        }
+        list.push({
+          card: {
+            id: tl.taskId, parent: "今日路线", title: tl.title,
+            type: v2.type === "accum-daily" || v2.type === "accum-weekly" ? "accumulate" : v2.type,
+            plannedMinutes: 0, doneCount: v2.items?.filter((i) => i.done).length ?? 0, totalCount: v2.items?.length || 1,
+            progress: v2.progress, elapsedMinutes: 0, items: v2.items ?? [], aiExec: "",
+          },
+          tagLabel, statText: "待开始", hint: "提前执行 · 点「出发」开始计时",
+          cardV2: v2,
+        });
       }
     }
     if (data.currentTask) {
-      if (!seen.has(data.currentTask.id)) {
-        seen.add(data.currentTask.id);
-        const { card, extra } = toCard(data.currentTask);
-        list.push({ card, ...extra, cardV2: toCardV2(data.currentTask, treeCache) });
-      }
+      const { card, extra } = toCard(data.currentTask);
+      list.push({ card, ...extra, cardV2: toCardV2(data.currentTask, treeCache) });
     } else {
       // BUG-20260807-047：mustDo 兜底跳过已完成任务——决策是静态快照（完成动作已删决策，
       // 但打开页面期间完成的场景仍可能命中旧快照），已完成任务不再占主卡。
-      // BUG-20260808-056：同时跳过已在 routeSel 前置卡展示的任务（防同 id 双卡）。
-      const m = data.mustDo.find((x) => x.status !== "completed" && x.status !== "cancelled" && !seen.has(x.taskId))
-        ?? data.mustDo.find((x) => !seen.has(x.taskId))
-        ?? data.mustDo[0];
-      if (m && !seen.has(m.taskId)) {
-        seen.add(m.taskId);
+      const m = data.mustDo.find((x) => x.status !== "completed" && x.status !== "cancelled") ?? data.mustDo[0];
+      if (m) {
         // 修复：mustDo 卡用后端增强数据（真实清单 children）构造完整卡
         const v2 = toCardV2({ id: m.taskId, title: m.title, description: m.description ?? null, taskType: m.taskType ?? null, category: m.category ?? null, parentTitle: null, children: m.children ?? [], scheduledStart: m.scheduledStart ?? null, scheduledEnd: m.scheduledEnd ?? null, elapsedMinutes: 0, remainingMinutes: 0, plannedMinutes: m.estimatedMinutes || 0, completionPercent: 0, purpose: m.purpose ?? null, departureAt: m.departureAt ?? null, accumulate: m.accumulate ?? false } as CurrentTask, treeCache);
         list.push({
@@ -734,11 +682,8 @@ export default function TodayPage() {
   // V3 §7.1 弹性双态：渲染后测量「问候语 + 主卡」实际高度判定（不写死清单条数阈值）
   // 滞回带宽 40px 防 max-w 切换引起高度回振（>560 进复杂态 / ≤520 回简单态）
   // D-新3：Today 全宽，删除弹性双态测量逻辑（原 2026-08-03 V3 §7.1）
-  // BUG-20260808-055：加载中保留旧数据渲染（仅首次无数据时显示骨架）——
-  // 否则每次 load()（勾选/完成等操作后）期间 loading=true → 主卡区清空成骨架，
-  // 用户看到"勾选完成后清单消失"。
-  if (loading && !dataRef.current) return <div className="space-y-3"><div className="h-8 w-56 rounded bg-[var(--color-gray-100)] animate-pulse" /><div className="h-64 rounded-xl bg-[var(--color-gray-100)] animate-pulse" /><div className="h-10 rounded-lg bg-[var(--color-gray-100)] animate-pulse" /></div>;
-  if (error && !dataRef.current) return (
+  if (loading) return <div className="space-y-3"><div className="h-8 w-56 rounded bg-[var(--color-gray-100)] animate-pulse" /><div className="h-64 rounded-xl bg-[var(--color-gray-100)] animate-pulse" /><div className="h-10 rounded-lg bg-[var(--color-gray-100)] animate-pulse" /></div>;
+  if (error) return (
     <div className="text-center py-16">
       <div className="text-[15px] font-medium text-[var(--v2-text)] mb-2">加载今日数据失败</div>
       <button onClick={load} className="text-sm px-4 py-2 rounded-lg bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)] transition">重试</button>
@@ -749,12 +694,6 @@ export default function TodayPage() {
 
   return (
     <div className="space-y-4">
-      {/* BUG-20260808-055：操作失败提示（非破坏性，不再整页崩溃） */}
-      {opMsg && (
-        <div className="fixed left-1/2 bottom-14 -translate-x-1/2 z-[99] bg-[#b91c1c] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-lg max-w-[80vw] text-center whitespace-nowrap">
-          {opMsg}
-        </div>
-      )}
       {/* 收尾批次 A2：明天继续 toast */}
       {contToast && (
         <div className="fixed left-1/2 bottom-8 -translate-x-1/2 z-[99] bg-[#1f2937] text-white text-[13px] px-4 py-2.5 rounded-xl shadow-lg max-w-[80vw] text-center whitespace-nowrap">

@@ -83,14 +83,9 @@ test.describe("12 用户日常流程端到端全仿真（纯 UI）", () => {
     const hitA = await findLatestTaskByPrefix(page.request, "完成产品需求评审文档");
     expect(hitA, "A 应已创建").not.toBeNull();
     tasks.A = { id: hitA!.id, title: hitA!.title };
-    // BUG-20260808-055：补建 A 第 2 个子任务——若仅 1 个子任务，环节5 勾选即联动 A completed
-    // （action 全子项完成 → 父完成）→ 主卡切走 → 后续新增子项断言失败。输入框每次加完即关
-    // （SimpleCard addChild → setAddingChild(false)），第 2 个走 API 补建。
-    const extraChild = await page.request.post("/api/tasks", { data: { title: "评审会议记录", parentId: tasks.A.id, level: "task", taskType: "task" } });
-    expect(extraChild.ok(), "补建 A 第 2 个子任务").toBeTruthy();
-    // 断言：importance=1（低）+ 2 个子任务
+    // 断言：importance=1（低）+ 1 个子任务
     await expect.poll(async () => Number((await getTask(page.request, tasks.A.id)).importance ?? 0), { timeout: 30_000 }).toBe(1);
-    await expect.poll(async () => ((await getTask(page.request, tasks.A.id)).children as unknown[])?.length ?? 0, { timeout: 30_000 }).toBe(2);
+    await expect.poll(async () => ((await getTask(page.request, tasks.A.id)).children as unknown[])?.length ?? 0, { timeout: 30_000 }).toBe(1);
 
     // D：学习型（imp 高 + 截止今天 → mustDo[0]）
     step(testInfo, "环节1/2-D 录入学习型任务 + 重要性高 + 截止今天");
@@ -276,8 +271,7 @@ test.describe("12 用户日常流程端到端全仿真（纯 UI）", () => {
     await expect(addInput).toBeVisible({ timeout: 10_000 });
     await addInput.fill("补充风险清单");
     await addInput.press("Enter");
-    // BUG-20260808-055：超时提到 30s——Neon 跨洋 POST(3s)+views/today(10-16s)+渲染，15s 不够
-    await expect(page.getByText("补充风险清单")).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByText("补充风险清单")).toBeVisible({ timeout: 15_000 });
     // 该项完成 → 补记弹窗（默认值核对）→ 确定
     await page.getByRole("button", { name: "该项完成" }).first().click();
     await expect(page.getByRole("button", { name: "确定" }).first()).toBeVisible({ timeout: 10_000 });
@@ -345,17 +339,7 @@ test.describe("12 用户日常流程端到端全仿真（纯 UI）", () => {
     // 环节 6 末尾在 Projects（习惯区验证）→ 先回 Today 再 reload
     await gotoNav(page, "today");
     await page.reload();
-    // BUG-20260808-055：F2 惰性结算兜底——本环节验证 D 学习卡，与 F2 无关；
-    // Neon 慢环境下惰性结算偶发未触发时，主动完成 F2（防其高分占 mustDo[0] 挡住 D）
-    {
-      const f2st = (await getTask(page.request, tasks.F2.id)).status;
-      if (f2st !== "completed") {
-        await page.request.post(`/api/tasks/${tasks.F2.id}/action`, { data: { action: "complete" } });
-        await page.reload();
-        await page.waitForTimeout(3000);
-      }
-    }
-    await expect(page.locator(`text=${tasks.D.title}`).first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator(`text=${tasks.D.title}`).first()).toBeVisible({ timeout: 30_000 });
     // 学习型（无子任务）或新增知识点后的清单型均可——类型由 children 推断，交互一致
     await expect(page.locator("text=/学习型|清单型/").first()).toBeVisible({ timeout: 15_000 });
     // ＋ 添加 2 个知识点

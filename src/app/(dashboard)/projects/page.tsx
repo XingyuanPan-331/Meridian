@@ -438,9 +438,7 @@ export default function ProjectsPage() {
   /* ── 行渲染（flatten + 连接线重算） ── */
   const visibleRows = useMemo(() => {
     const rows: { node: TreeNode; lvl: number; hasKids: boolean; isOpen: boolean }[] = [];
-    // BUG-20260808-055：树显示全部项目（project/phase 级无论完成与否）+ ★ 执行清单任务
-    // （task 级但标记执行清单的"清单项目"也显示——否则未挂树的执行清单会在树里"消失"）
-    const roots = trees.filter((t) => t.level !== "task" || t.star);
+    const roots = trees.filter((t) => t.level !== "task");
     const walk = (list: TreeNode[], lvl: number) => {
       list.forEach((n) => {
         const kids = n.children || [];

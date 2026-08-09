@@ -641,6 +641,22 @@ export default function TodayPage() {
     finally { setBusy(false); }
   }, [data, routeSelTask, load, failToast]);
 
+  // 2026-08-09：「该项完成」带耗时——完成清单子项，completedAt 由调用方推算（出发+耗时）
+  const completeItemWithTime = useCallback(async (parentId: string, childId: string, completedAt: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/tasks/${childId}/action`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete", completedAt }),
+      });
+      if (!r.ok) throw new Error("操作失败");
+      okToast("已勾选该项 · 自动高亮下一项");
+      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
+      await load();
+    } catch { failToast("操作失败，请重试"); }
+    finally { setBusy(false); }
+  }, [load, failToast, okToast]);
+
   // 2026-08-09：执行清单排序（上移/下移 + 拖拽）——乐观重排 → reorder API 持久化 → 事件同步 project
   const reorderItems = useCallback(async (parentId: string, orderedIds: string[]) => {
     if (orderedIds.length < 2) return;
@@ -881,11 +897,17 @@ export default function TodayPage() {
             onItemAdd={(title) => addChildItem(cur.card.id, title)}
             onItemMove={(childId, dir) => moveItem(cur.card.id, childId, dir)}
             onItemReorder={(fromId, toId) => reorderViaDrag(cur.card.id, fromId, toId)}
-            // 2026-08-09：主卡"完成"（清单有未完成项时）= 勾选当前高亮清单项，不完成整个任务
-            onCompleteItem={() => {
+            // 2026-08-09：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
+            // completedAt = 任务出发时间 + 用户填的耗时（保证清单项耗时展示 = 用户填写值）
+            onCompleteItem={(min) => {
               const items = cur.cardV2.items ?? [];
               const next = items.find((i) => !i.done);
-              if (next) toggleChildItem(next.id);
+              if (!next) return;
+              const dep = cur.cardV2.departureAt;
+              const completedAt = dep
+                ? new Date(new Date(dep).getTime() + Math.max(1, min) * 60000).toISOString()
+                : new Date().toISOString();
+              completeItemWithTime(cur.card.id, next.id, completedAt);
             }}
             onContinueTomorrow={() => continueTomorrow(cur.card.id)}
             busy={busy}

@@ -56,8 +56,8 @@ interface Props {
   /** 2026-08-09：执行清单排序——上移/下移（dir: -1/1）与拖拽换序（fromId → toId） */
   onItemMove?: (itemId: string, dir: -1 | 1) => void;
   onItemReorder?: (fromId: string, toId: string) => void;
-  /** 2026-08-09：主卡"完成"在清单有未完成项时=完成当前高亮项（不完成整个任务） */
-  onCompleteItem?: () => void;
+  /** 2026-08-09：主卡"完成"在清单有未完成项时=完成当前高亮项（耗时弹窗确认后，min=该项耗时分钟） */
+  onCompleteItem?: (min: number) => void;
   onCheckin?: (detail?: string) => void;
   onSkip?: () => void;
   onPause?: (reason: string) => void;
@@ -123,7 +123,7 @@ function MonthCal({ monthDates }: { monthDates?: string[] }) {
 const PAUSE_REASONS = ["太难了", "注意力下降", "临时有事", "估时错误", "其他"];
 
 /* ── 补记时长弹窗 ── */
-function DurationModal({ departureAt, onConfirm, onClose }: { departureAt: string | null; onConfirm: (min: number) => void; onClose: () => void }) {
+function DurationModal({ departureAt, title, onConfirm, onClose }: { departureAt: string | null; title?: string; onConfirm: (min: number) => void; onClose: () => void }) {
   const defaultMin = useMemo(() => {
     if (!departureAt) return 30;
     const diff = Math.round((Date.now() - new Date(departureAt).getTime()) / 60000);
@@ -144,7 +144,7 @@ function DurationModal({ departureAt, onConfirm, onClose }: { departureAt: strin
     onConfirm(v);
   };
   return (
-    <Modal title="刚才做了多久？" onClose={onClose}>
+    <Modal title={title ?? "刚才做了多久？"} onClose={onClose}>
       <div className="text-sm text-[var(--v2-text2)]">从 <b className="text-[var(--v2-text)]">{depLabel}</b> 出发 · 默认按到现在计算</div>
       <div className="flex gap-2 mt-2.5">
         {[30, 60].map((m) => (
@@ -381,14 +381,22 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
   const hasPendingItem = card.type === "checklist" && pendingItems.length > 0;
   // 2026-08-09：清单全部勾完 → going 阶段主按钮变为「完成」（弹耗时确认），不再停留"进行中…"
   const allItemsDone = card.type === "checklist" && (card.items?.length ?? 0) > 0 && !hasPendingItem;
+  // 2026-08-09（BUG-057-3）：「该项完成」同样先弹耗时弹窗（用户填该项耗时 → 确认 → 该项完成），
+  // 不直接勾选；mode 区分弹窗语义（item=完成清单项 / task=完成整个任务）
+  const [durMode, setDurMode] = useState<"item" | "task">("task");
   const finishFlow = () => {
-    if (hasPendingItem && onCompleteItem) { onCompleteItem(); return; }
+    if (hasPendingItem && onCompleteItem) { setDurMode("item"); setDurModal(true); return; }
     // 回来确认：非积累型弹补记时长；积累型弹打卡输入
     if (isAccum) { setCheckinModal(true); return; }
-    setDurModal(true);
+    setDurMode("task"); setDurModal(true);
   };
   const confirmDuration = (min: number) => {
     setDurModal(false);
+    if (durMode === "item" && onCompleteItem) {
+      // 完成当前清单项（耗时 min）：completedAt 由后端/前端按 出发+min 推算，保证展示耗时一致
+      onCompleteItem(min);
+      return;
+    }
     setDoneFlash(true);
     setPhase("done");
     // FCV2 对接：真实卡 → action complete + durationMinutes（补记时长）
@@ -664,7 +672,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
       </div>
 
       {/* 弹窗 */}
-      {durModal && <DurationModal departureAt={departureAt} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
+      {durModal && <DurationModal departureAt={departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
       {pauseModal && <PauseModal onConfirm={pauseConfirm} onClose={() => setPauseModal(false)} />}
       {checkinModal && <CheckinModal card={card} onConfirm={confirmCheckin} onClose={() => setCheckinModal(false)} />}
     </div>

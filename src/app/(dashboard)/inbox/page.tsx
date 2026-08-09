@@ -268,6 +268,10 @@ function EditPanel({ item, onSave, onCancel }: { item: InboxDraftItem; onSave: (
   const [category, setCategory] = useState(item.category || "other");
   const [theme, setTheme] = useState<string | null>(item.theme ?? resolveTheme(null, item.title));
   const [themeEdit, setThemeEdit] = useState(false);
+  // 2026-08-09：主题是否被用户手动改过——未手动改时保存不提交 theme（防止推断值/null 覆盖
+  // 库中已手动设置的主题，如"直流电机调速"推断不出"竞赛"→ 误清用户设置）
+  const [themeTouched, setThemeTouched] = useState(false);
+  const touchTheme = (v: string | null) => { setTheme(v); setThemeTouched(true); };
   const [customName, setCustomName] = useState("");
   const [customColor, setCustomColor] = useState(THEME_SWATCHES[5]);
   // B7：当前主题落库色（自定义主题颜色不再丢失；预设主题为 null 用 THEMES 派生）
@@ -284,6 +288,14 @@ function EditPanel({ item, onSave, onCancel }: { item: InboxDraftItem; onSave: (
   const [children, setChildren] = useState<{ title: string; estimatedMinutes: number }[]>(
     item.breakdown?.phases.flatMap((p) => p.tasks.map((t) => ({ title: t.title, estimatedMinutes: t.estimatedMinutes }))) ?? []
   );
+  // 2026-08-09 主题统一：已用自定义主题列表（与档案面板同一 /api/themes 聚合，全局一致可选复用）
+  const [usedThemes, setUsedThemes] = useState<{ name: string; color: string; deep: string; bg: string; count: number }[]>([]);
+  useEffect(() => {
+    fetch("/api/themes")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.custom) setUsedThemes(d.custom); })
+      .catch(() => {});
+  }, []);
 
   const save = () => {
     const updated: InboxDraftItem = {
@@ -356,6 +368,14 @@ function EditPanel({ item, onSave, onCancel }: { item: InboxDraftItem; onSave: (
               );
             })}
             <button onClick={() => { setTheme(null); setThemeColor(null); }} className={`text-sm px-2.5 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
+            {/* 2026-08-09 主题统一：已用自定义主题（可选用 · 与档案面板一致） */}
+            {usedThemes.map((ut) => (
+              <button key={ut.name} onClick={() => { setTheme(theme === ut.name ? null : ut.name); setThemeColor({ color: ut.color, deep: ut.deep, bg: ut.bg }); }}
+                className="inline-flex items-center gap-1.5 text-sm px-2.5 py-1 rounded-md border transition"
+                style={{ background: theme === ut.name ? ut.bg : "#fff", color: theme === ut.name ? ut.deep : "var(--v2-text2)", borderColor: theme === ut.name ? ut.color : "var(--v2-border)" }}>
+                <span className="w-2 h-2 rounded-full" style={{ background: ut.color }} />{ut.name}<span className="text-[10px] opacity-60">{ut.count}</span>
+              </button>
+            ))}
           </div>
           {themeEdit && (
             <div className="mt-2 border border-[var(--v2-brand-border)] bg-[var(--v2-brand-bg)] rounded-lg p-2.5">
@@ -370,6 +390,8 @@ function EditPanel({ item, onSave, onCancel }: { item: InboxDraftItem; onSave: (
                   setThemeColor({ color: customColor, deep: customColor, bg: "#F8FAFC" });
                   setThemeEdit(false);
                   setCustomName("");
+                  // 2026-08-09 主题统一：新建主题本地加入已用列表（草稿期立即可复用；任务创建后 /api/themes 自然聚合）
+                  setUsedThemes((prev) => [...prev.filter((u) => u.name !== name), { name, color: customColor, deep: customColor, bg: "#F8FAFC", count: (prev.find((u) => u.name === name)?.count ?? 0) + 1 }]);
                 }} className="px-2.5 py-1 text-sm font-medium rounded bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]">确定</button>
               </div>
               <div className="flex gap-1.5 flex-wrap">

@@ -36,20 +36,26 @@ function InputCanvas({ greeting, onSubmit, loading }: {
   onSubmit: (content: string) => void;
   loading: boolean;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(() => {
+    // 2026-08-10 草稿持久化：切页回来输入内容保留（localStorage）
+    try { return typeof window !== "undefined" ? (localStorage.getItem("inbox-draft") ?? "") : ""; } catch { return ""; }
+  });
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const persist = (v: string) => { setValue(v); try { localStorage.setItem("inbox-draft", v); } catch {} };
 
   const send = () => {
     const v = value.trim();
     if (!v || loading) return;
     onSubmit(v);
     setValue("");
+    try { localStorage.removeItem("inbox-draft"); } catch {}
     if (taRef.current) taRef.current.style.height = "auto";
   };
 
   // P1-4：取消输入 = 清空 + 失焦 + 高度复位（关闭输入框，不只是清空）
   const closeInput = () => {
     setValue("");
+    try { localStorage.removeItem("inbox-draft"); } catch {}
     if (taRef.current) {
       taRef.current.style.height = "auto";
       taRef.current.blur();
@@ -63,7 +69,7 @@ function InputCanvas({ greeting, onSubmit, loading }: {
         <textarea
           ref={taRef}
           value={value}
-          onChange={(e) => { setValue(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; }}
+          onChange={(e) => { persist(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 200) + "px"; }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             // P1-4：Escape = 关闭输入框（清空 + 失焦），不再只是清空值

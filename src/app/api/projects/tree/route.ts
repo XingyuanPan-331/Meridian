@@ -85,10 +85,13 @@ export async function GET() {
     }
   }
 
-  // ── 阶段 C：完成度聚合（自底向上，直接子级统计；cancelled 不计入）──
+  // ── 阶段 C：完成度聚合（2026-08-10 语义修正：★ 执行清单统计，与 Today Focus 卡一致）──
+  // 项目进度 = 项目下所有 ★ 清单的完成数/总数（不再递归全子级"完成清单项/总清单项"）
   function aggregateCompletion(node: TreeNode): { done: number; total: number } {
-    let done = node.status === "completed" ? 1 : 0;
-    let total = node.status !== "cancelled" ? 1 : 0;
+    const isStarRoot = !!node.star;
+    // ★ 节点计入进度；非 ★ 节点只透传子树中 ★ 的统计
+    let done = isStarRoot && node.status === "completed" ? 1 : 0;
+    let total = isStarRoot && node.status !== "cancelled" ? 1 : 0;
     for (const c of node.children) {
       const sub = aggregateCompletion(c);
       done += sub.done;

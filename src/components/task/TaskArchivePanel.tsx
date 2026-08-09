@@ -373,8 +373,18 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                         setCustomThemeColor({ color: customColor, deep: customColor, bg: "#F8FAFC" });
                         setThemeEdit(false);
                         setCustomName("");
-                        // 2026-08-09 主题管理：新建主题后立即刷新已用主题列表（否则新主题不在可选列表）
-                        reloadThemes();
+                        // 2026-08-10 主题管理完整化：新建主题【立即落库】（不等"保存修改"）——
+                        // 用户期望即建即用；保存失败仅提示不阻断本地选择
+                        fetch(`/api/tasks/${taskId}`, {
+                          method: "PUT", headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ theme: name, themeColor: JSON.stringify({ color: customColor, deep: customColor, bg: "#F8FAFC" }) }),
+                        }).then((r) => {
+                          if (r.ok) {
+                            setSavedTip(`主题「${name}」已保存 ✓`);
+                            reloadThemes();
+                            window.dispatchEvent(new CustomEvent("meridian-task-changed"));
+                          }
+                        }).catch(() => setSavedTip("主题保存失败，请重试"));
                       }} className="px-2.5 py-1 text-sm font-medium rounded bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]">确定</button>
                     </div>
                     <div className="flex gap-1.5 flex-wrap">

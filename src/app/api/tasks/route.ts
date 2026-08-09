@@ -62,6 +62,25 @@ export async function POST(req: NextRequest) {
     const theme = typeof body.theme === "string" && body.theme.trim() ? body.theme.trim().slice(0, 20) : null;
     // B7：自定义主题颜色落库（theme 为空时颜色无意义 → null）
     const themeColor = theme ? normalizeThemeColorInput(body.themeColor).value : null;
+
+    // 2026-08-10 归属继承：子任务未显式传领域/主题 → 从父任务继承（项目属性统一性）
+    // 用户反馈：project 页创建的任务领域/主题没跟随项目
+    let inheritCat = cat;
+    let inheritTheme = theme;
+    let inheritThemeColor = themeColor;
+    if (parentId && (body.category === undefined || body.theme === undefined)) {
+      const parent = await prisma.task.findUnique({
+        where: { id: parentId, userId: session.user.id },
+        select: { category: true, theme: true, themeColor: true },
+      });
+      if (parent) {
+        if (body.category === undefined) inheritCat = normalizeCategory(parent.category ?? "other");
+        if (body.theme === undefined) {
+          inheritTheme = parent.theme;
+          inheritThemeColor = parent.themeColor;
+        }
+      }
+    }
     // Focus Card V2：purpose 入参归一化（≤50 字，空则 null）
     const purpose = typeof body.purpose === "string" && body.purpose.trim() ? body.purpose.trim().slice(0, 50) : null;
     // V5 层级重构：level 白名单 + 积累型标记
@@ -91,15 +110,15 @@ export async function POST(req: NextRequest) {
           description: description || null,
           taskType: type,
           importance: imp,
-          theme,
-          themeColor,
+          theme: inheritTheme,
+          themeColor: inheritThemeColor,
           purpose,
           deadline: deadline ? new Date(deadline) : null,
           estimatedMinutes: calcEstimated || null,
           estimatedUnit,
           tags: tags || null,
           parentId: parentId || null,
-          category: cat === "other" ? null : cat,
+          category: inheritCat === "other" ? null : inheritCat,
           // V5：层级语义 + 积累型
           level,
           accumulate,

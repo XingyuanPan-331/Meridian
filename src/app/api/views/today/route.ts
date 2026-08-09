@@ -54,7 +54,7 @@ async function buildAncestorChain(userId: string, taskId: string | null): Promis
 // 当前任务卡片（V5：就近两级 + 积累卡片数据；V3：+theme/themeColor；FCV2：+purpose/+departureAt）
 async function buildCurrentTaskCard(
   userId: string,
-  task: { id: string; title: string; description: string | null; taskType: string; category: string | null; theme: string | null; purpose: string | null; departureAt: Date | null; parentId: string | null; level: string | null; accumulate: boolean; status: string },
+  task: { id: string; title: string; description: string | null; taskType: string; category: string | null; theme: string | null; purpose: string | null; departureAt: Date | null; parentId: string | null; level: string | null; accumulate: boolean },
   schedule: { scheduledStart: Date; scheduledEnd: Date | null } | undefined,
   extra: { elapsedMinutes: number; plannedMinutes: number; completionPercent: number }
 ) {
@@ -67,8 +67,6 @@ async function buildCurrentTaskCard(
     id: task.id, title: task.title,
     description: task.description,
     taskType: task.taskType, category: task.category,
-    // 2026-08-09：任务状态回传（前端 toCardV2 据此判断 done——原用 taskType 判断完成导致永远不显示"已完成"）
-    status: task.status,
     // V3 C5：主题 + 配色（档案/Focus Card 消费）
     theme: task.theme,
     themeColor: task.theme ? themeColor(task.theme) : null,
@@ -123,11 +121,9 @@ async function lazySettleExpiredScheduled(userId: string, now = new Date()) {
 
   let settled = 0;
   for (const task of candidates) {
-    // BUG-20260808-055：只找最近一条【已过期】的排期（scheduledEnd < now）——
-    // 原实现取"最近排期"（含未来续排），若任务被 AI pipeline/续排到未来时段，
-    // 最近排期未过期 → 跳过 → 今天已过期的时段永不结算 → 过期 scheduled 占主卡。
+    // 最近一条排期（含已结束的过去排期）
     const last = await prisma.schedule.findFirst({
-      where: { taskId: task.id, userId, scheduledEnd: { lt: now } },
+      where: { taskId: task.id, userId },
       orderBy: { scheduledStart: "desc" },
     });
     if (!last?.scheduledEnd || last.scheduledEnd >= now) continue;
@@ -228,7 +224,7 @@ export async function GET() {
       if (cs.scheduledStart > now || (cs.scheduledEnd && cs.scheduledEnd < now)) continue;
       const t = await prisma.task.findFirst({
         where: { id: cs.taskId, userId, status: { notIn: ["completed", "cancelled"] } },
-        select: { id: true, title: true, description: true, taskType: true, category: true, theme: true, purpose: true, departureAt: true, parentId: true, level: true, accumulate: true, status: true },
+        select: { id: true, title: true, description: true, taskType: true, category: true, theme: true, purpose: true, departureAt: true, parentId: true, level: true, accumulate: true },
       });
       if (t) {
         // 修复：Priority 2 的"预计"必须按排期时长算（原硬编码 0 → Focus Card 显示待排期/0 分钟）

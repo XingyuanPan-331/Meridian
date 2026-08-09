@@ -14,8 +14,6 @@ export interface TimelineItem {
   end: string | null;
   duration: string;
   isCurrent: boolean;
-  /** 2026-08-09：任务状态（今日路线保留已完成任务展示，前端据此显示"已完成"而非"进行中"） */
-  status: string;
 }
 
 /** Get planned minutes from the latest Schedule only (defensive: single, not sum) */
@@ -61,15 +59,13 @@ export async function getTodayTimeline(userId: string): Promise<TimelineItem[]> 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // 2026-08-09：今日路线保留已完成任务（排期是既定事实，完成的任务也应展示）；
-  // 任务状态随 timeline 返回，前端据此显示"已完成"而非"进行中"（不再用过滤掩盖）。
   const schedules = await prisma.schedule.findMany({
     where: { userId, scheduledStart: { gte: today, lt: tomorrow } },
     orderBy: { scheduledStart: "asc" },
-    include: { task: { select: { title: true, status: true } } },
+    include: { task: { select: { title: true } } },
   });
 
-  return schedules.filter((s) => s.task).map(s => ({
+  return schedules.map(s => ({
     taskId: s.taskId,
     title: s.task.title,
     start: s.scheduledStart.toISOString(),
@@ -78,6 +74,5 @@ export async function getTodayTimeline(userId: string): Promise<TimelineItem[]> 
       ? `${Math.max(0, Math.round((s.scheduledEnd.getTime() - s.scheduledStart.getTime()) / 60000))}分钟`
       : "—",
     isCurrent: s.scheduledStart <= now && (!s.scheduledEnd || s.scheduledEnd >= now),
-    status: s.task.status,
   }));
 }

@@ -688,7 +688,9 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemS
       </div>
 
       {/* 弹窗 */}
-      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? departureAt) : departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
+      {/* 2026-08-09（计时器重置 Bug）：item 模式默认值用「该项自己的开始时间」，不再兜底父任务出发——
+          未开始项（无 startedAt）用初始默认（30 分钟），避免沿用父任务出发 3 小时前的 180 分钟 */}
+      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? null) : departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
       {pauseModal && <PauseModal onConfirm={pauseConfirm} onClose={() => setPauseModal(false)} />}
       {checkinModal && <CheckinModal card={card} onConfirm={confirmCheckin} onClose={() => setCheckinModal(false)} />}
     </div>

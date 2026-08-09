@@ -108,7 +108,7 @@ function toCard(t: CurrentTask): { card: FocusCard; extra: { statText: string; t
       totalCount,
       progress: t.completionPercent ?? 0,
       elapsedMinutes: t.elapsedMinutes || 0,
-      items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt })),
+      items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
       aiExec: "",
       accumulate: t.accumulate || false,
       streak: t.streak ?? null,
@@ -231,7 +231,7 @@ function toCardV2(t: CurrentTask, trees: ProjTreeNode[] = []): FocusCardV2Data {
     elapsedMinutes: t.elapsedMinutes || 0,
     remainingMinutes: t.remainingMinutes || 0,
     progress: t.completionPercent ?? 0,
-    items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt })),
+    items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
     streak: t.streak ? { current: t.streak.current ?? 0, longest: t.streak.longest ?? 0 } : undefined,
     weekTarget: t.accumStats?.weekTarget,
     weekCount: t.accumStats?.weekCount,
@@ -913,13 +913,14 @@ export default function TodayPage() {
             onItemAdd={(title) => addChildItem(cur.card.id, title)}
             onItemMove={(childId, dir) => moveItem(cur.card.id, childId, dir)}
             onItemReorder={(fromId, toId) => reorderViaDrag(cur.card.id, fromId, toId)}
-            // 2026-08-09：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
-            // completedAt = 该项自己开始时间（startedAt，兜底任务出发）+ 用户填的耗时
+            // 2026-08-09（计时器重置 Bug）：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
+            // completedAt = 该项自己开始时间（startedAt）+ 用户填的耗时；
+            // 该项未开始（无 startedAt）→ 以当前时刻为完成时间（不再兜底父任务出发的旧值）
             onCompleteItem={(min) => {
               const items = cur.cardV2.items ?? [];
               const next = items.find((i) => !i.done);
               if (!next) return;
-              const start = next.startedAt ?? cur.cardV2.departureAt;
+              const start = next.startedAt ?? null;
               const completedAt = start
                 ? new Date(new Date(start).getTime() + Math.max(1, min) * 60000).toISOString()
                 : new Date().toISOString();

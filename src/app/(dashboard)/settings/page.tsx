@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { localDateStr } from "@/lib/date";
-import { useSession, signOut, getSession } from "next-auth/react";
+import { useSession, signOut } from "next-auth/react";
 import { NavLayoutSettings } from "@/components/settings/nav-layout-settings";
 import { PERIOD_KEYS, PERIOD_LABELS, DEFAULT_BOUNDARIES } from "@/lib/task/periods";
 import { buildExportHeader } from "@/lib/export-version";
@@ -569,18 +569,9 @@ function DataCard() {
           <div className="text-sm text-[#b91c1c] opacity-80 mt-0.5">永久删除全部数据 · 不可恢复</div>
         </div>
         <button className="text-sm px-2.5 py-1 rounded-lg bg-white border border-[var(--color-danger-border)] text-[var(--color-danger-text)]" onClick={async () => {
-          // 2026-08-09 数据丢失事故防御：双重 confirm 浏览器弹窗易误触 → 改为输入注册邮箱验证 +
-          // 先导出备份引导（误删后可通过备份 JSON 恢复）
-          if (!confirm("此操作将永久删除账户和全部数据，不可恢复。\n强烈建议先点上方「导出 JSON」备份数据。\n确定继续？")) return;
+          if (!confirm("此操作将永久删除账户和全部数据，不可恢复。确定继续？")) return;
+          if (!confirm("再次确认：真的要删除吗？")) return;
           try {
-            const session = await getSession();
-            const myEmail = session?.user?.email ?? "";
-            const input = prompt("⚠️ 永久删除不可恢复！\n如需继续，请输入你的注册邮箱（" + (myEmail ? myEmail.replace(/^(.{2}).*@/, "$1***@") : "…") + "）确认：");
-            if (!input) return;
-            if (input.trim().toLowerCase() !== myEmail.toLowerCase()) {
-              alert("邮箱不匹配，已取消删除（数据安全）。");
-              return;
-            }
             const r = await fetch("/api/user", { method: "DELETE" });
             if (r.ok) { await signOut({ callbackUrl: "/login" }); }
             else alert("删除失败，请重试");

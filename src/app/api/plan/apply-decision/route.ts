@@ -64,6 +64,27 @@ export async function POST(req: NextRequest) {
         const c = changes[i];
         // B10：用户手动调整排期（拖动/改时间）= 手动接管，AI 来源取消（Plan 不再显示失真 AI 徽章）
         prisma.task.updateMany({ where: { id: c.taskId, userId: session.user.id, source: "ai" }, data: { source: "user" } }).catch(() => {});
+        // 计时模型 V2：拖拽【已完成】任务 → 执行时间随新位置平移（departureAt/completedAt 相对平移，
+        // 保持段长；"所有时间记录以新位置为准"）。2026-08-09 修复：仅 completed 状态——
+        // 未完成任务拖拽只调整排期（出发时刻是执行事实，不应被排期拖动改写，否则出现"05:10 出发"错乱）
+        try {
+          const oldStart = moveResults[i]?.oldStart;
+          if (oldStart) {
+            const exec = await prisma.task.findUnique({
+              where: { id: c.taskId, userId: session.user.id },
+              select: { departureAt: true, completedAt: true, status: true },
+            });
+            if (exec && exec.status === "completed" && (exec.departureAt || exec.completedAt)) {
+              const shift = new Date(c.newStart).getTime() - new Date(oldStart).getTime();
+              const execData: { departureAt?: Date; completedAt?: Date } = {};
+              if (exec.departureAt) execData.departureAt = new Date(exec.departureAt.getTime() + shift);
+              if (exec.completedAt) execData.completedAt = new Date(exec.completedAt.getTime() + shift);
+              if (execData.departureAt || execData.completedAt) {
+                await prisma.task.update({ where: { id: c.taskId }, data: execData });
+              }
+            }
+          }
+        } catch {}
         createFeedback({
           userId: session.user.id,
           taskId: c.taskId,

@@ -268,6 +268,10 @@ function EditPanel({ item, onSave, onCancel }: { item: InboxDraftItem; onSave: (
   const [category, setCategory] = useState(item.category || "other");
   const [theme, setTheme] = useState<string | null>(item.theme ?? resolveTheme(null, item.title));
   const [themeEdit, setThemeEdit] = useState(false);
+  // 2026-08-09：主题是否被用户手动改过——未手动改时保存不提交 theme（防止推断值/null 覆盖
+  // 库中已手动设置的主题，如"直流电机调速"推断不出"竞赛"→ 误清用户设置）
+  const [themeTouched, setThemeTouched] = useState(false);
+  const touchTheme = (v: string | null) => { setTheme(v); setThemeTouched(true); };
   const [customName, setCustomName] = useState("");
   const [customColor, setCustomColor] = useState(THEME_SWATCHES[5]);
   // B7：当前主题落库色（自定义主题颜色不再丢失；预设主题为 null 用 THEMES 派生）

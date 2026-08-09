@@ -55,6 +55,9 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("other");
   const [theme, setTheme] = useState<string | null>(null);
+  // 2026-08-09：主题是否被用户手动改过——未手动改时保存不提交 theme（防止加载失败/推断
+  // 产生的 null 覆盖库中已手动设置的主题，如"直流电机调速"推断不出"竞赛"→ 误清用户设置）
+  const [themeTouched, setThemeTouched] = useState(false);
   // B7：当前主题落库色（自定义主题的颜色不再丢失；预设主题为 null 用 THEMES 派生）
   const [customThemeColor, setCustomThemeColor] = useState<{ color: string; deep: string; bg: string } | null>(null);
   const [themeEdit, setThemeEdit] = useState(false);
@@ -173,7 +176,8 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
         title: title.trim() || task.title,
         category,
         // V3 阶段 C3：PUT 白名单已支持 theme（null 清除）→ 真实持久化；B7：自定义主题颜色一并落库
-        ...(theme ? { theme, ...(customThemeColor ? { themeColor: JSON.stringify(customThemeColor) } : { themeColor: null }) } : { theme: null, themeColor: null }),
+        // 2026-08-09：仅用户手动改过主题才提交（themeTouched）——推断/null 不再覆盖库中手动设置
+        ...(themeTouched ? (theme ? { theme, ...(customThemeColor ? { themeColor: JSON.stringify(customThemeColor) } : { themeColor: null }) } : { theme: null, themeColor: null }) : {}),
         // FCV2：purpose（≤50 字；空 → null 清除）
         ...(purpose.trim() ? { purpose: purpose.trim().slice(0, 50) } : { purpose: null }),
         // P1-10：预估按单位换算成分钟（estimatedMinutes 内部标准）+ 记录单位
@@ -268,14 +272,14 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                   {THEME_PRESETS.map((t) => {
                     const c = themeColor(t) ?? THEME_FALLBACK;
                     return (
-                      <button key={t} onClick={() => { setTheme(theme === t ? null : t); setCustomThemeColor(null); }}
+                      <button key={t} onClick={() => { setTheme(theme === t ? null : t); setThemeTouched(true); setCustomThemeColor(null); }}
                         className="inline-flex items-center gap-1.5 text-sm px-2 py-1 rounded-md border transition"
                         style={{ background: theme === t ? c.bg : "#fff", color: theme === t ? c.deep : "var(--v2-text2)", borderColor: theme === t ? c.color : "var(--v2-border)" }}>
                         <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{t}
                       </button>
                     );
                   })}
-                  <button onClick={() => { setTheme(null); setCustomThemeColor(null); }} className={`text-sm px-2 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
+                  <button onClick={() => { setTheme(null); setThemeTouched(true); setCustomThemeColor(null); }} className={`text-sm px-2 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
                 </div>
                 {themeEdit && (
                   <div className="mt-2 border border-[var(--v2-brand-border)] bg-[var(--v2-brand-bg)] rounded-lg p-2.5">
@@ -286,7 +290,7 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                         const name = customName.trim();
                         if (!name) return;
                         // B7：确定即保存（theme + 选色落库，不再两步操作丢颜色）
-                        setTheme(name);
+                        setTheme(name); setThemeTouched(true);
                         setCustomThemeColor({ color: customColor, deep: customColor, bg: "#F8FAFC" });
                         setThemeEdit(false);
                         setCustomName("");

@@ -553,8 +553,3 @@
   /* 禁用双击缩放（PWA 中误触更明显） */
   * { touch-action: manipulation; }
 }
-
-/* 2026-08-09：Turbopack 对 [var(--page-*)] 任意值类的 CSS 转义 bug 规避——改用映射类 */
-.bg-page-sidebar { background-color: var(--page-sidebar); }
-.text-page-sidebar { color: var(--page-sidebar-text); }
-.border-page-border { border-color: var(--page-border); }

@@ -4,10 +4,6 @@ import { AuthProvider } from "@/components/auth-provider";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import PwaRegister from "@/components/pwa-register";
 
-// 提速（2026-08-09）：Vercel 函数区域固定香港（hkg1）——数据库迁到 Neon 新加坡后，
-// 用户(国内)→香港 ~50ms + 香港→新加坡 ~40ms，相比默认 iad1（美东）跨洋 250ms+ 大幅降低
-export const preferredRegion = "hkg1";
-
 export const metadata: Metadata = {
   title: "Meridian · 子午",
   description: "AI 驱动的个人时间操作系统——把脑海里的纷繁整理成可执行的时间系统，每一天围绕真正重要的事物运转。",

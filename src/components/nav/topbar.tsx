@@ -30,7 +30,7 @@ export function Topbar({ userName }: TopbarProps) {
   }, []);
 
   return (
-    <header className="h-14 shrink-0 bg-page-sidebar text-page-sidebar grid grid-cols-[1fr_auto_1fr] items-center px-5 gap-4">
+    <header className="h-14 shrink-0 bg-[var(--page-sidebar)] text-[var(--page-sidebar-text)] grid grid-cols-[1fr_auto_1fr] items-center px-5 gap-4">
       {/* Brand（左）· Meridian · C 方案 Logo */}
       <div className="flex items-center gap-3">
         <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "var(--color-grad-brand)" }}>
@@ -53,13 +53,13 @@ export function Topbar({ userName }: TopbarProps) {
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all duration-150 ${
                 active
                   ? "bg-brand-600 text-white font-medium sh-glow"
-                  : "text-page-sidebar/60 hover:bg-white/6 hover:text-page-sidebar"
+                  : "text-[var(--page-sidebar-text)]/60 hover:bg-white/6 hover:text-[var(--page-sidebar-text)]"
               }`}>
               <span className="shrink-0" style={{ width: 18, height: 18 }}>
-                <Icon size={18} className={active ? "text-brand-200" : "text-page-sidebar/45"} />
+                <Icon size={18} className={active ? "text-brand-200" : "text-[var(--page-sidebar-text)]/45"} />
               </span>
               <span className="leading-none">{label}</span>
-              {isDefault && !active && <span className="text-xs px-1.5 py-px rounded bg-white/12 text-page-sidebar/60">{lang === "zh" ? "默认" : "Default"}</span>}
+              {isDefault && !active && <span className="text-xs px-1.5 py-px rounded bg-white/12 text-[var(--page-sidebar-text)]/60">{lang === "zh" ? "默认" : "Default"}</span>}
             </Link>
           );
         })}
@@ -68,7 +68,7 @@ export function Topbar({ userName }: TopbarProps) {
       {/* 设置 + 用户（右，占位对称） */}
       <div className="flex items-center gap-3 justify-end">
         <Link href="/settings" title="设置"
-          className={`p-2 rounded-lg transition ${pathname === "/settings" ? "bg-brand-600 text-white" : "text-page-sidebar/45 hover:bg-white/6 hover:text-page-sidebar"}`}>
+          className={`p-2 rounded-lg transition ${pathname === "/settings" ? "bg-brand-600 text-white" : "text-[var(--page-sidebar-text)]/45 hover:bg-white/6 hover:text-[var(--page-sidebar-text)]"}`}>
           <SettingsIcon size={18} />
         </Link>
         <div className="flex items-center gap-2">
@@ -76,7 +76,7 @@ export function Topbar({ userName }: TopbarProps) {
             {userName.charAt(0).toUpperCase()}
           </div>
           <span className="text-sm hidden xl:inline">{userName}</span>
-          <button onClick={() => signOut({ callbackUrl: "/login" })} className="text-page-sidebar/45 hover:text-page-sidebar/80 transition p-1" title="退出登录">
+          <button onClick={() => signOut({ callbackUrl: "/login" })} className="text-[var(--page-sidebar-text)]/45 hover:text-[var(--page-sidebar-text)]/80 transition p-1" title="退出登录">
             <LogOutIcon size={15} />
           </button>
         </div>

@@ -53,9 +53,6 @@ interface Props {
   onItemToggle?: (itemId: string) => void;
   /** P1-11：清单新增项（今日页 → POST /api/tasks 建子任务；不传则隐藏加号） */
   onItemAdd?: (title: string) => void;
-  /** 2026-08-09：执行清单排序——上移/下移（dir: -1/1）与拖拽换序（fromId → toId） */
-  onItemMove?: (itemId: string, dir: -1 | 1) => void;
-  onItemReorder?: (fromId: string, toId: string) => void;
   onCheckin?: (detail?: string) => void;
   onSkip?: () => void;
   onPause?: (reason: string) => void;
@@ -211,7 +208,7 @@ function ModalFoot({ onOk, onCancel, okText = "确定" }: { onOk: () => void; on
 }
 
 /* ── 清单（v2-memo 样式：底 #fff9e6 / 左边条 #f5a623 / 标题字 #8b6914 / 勾选框 #d4a853 + 小标题虚线） ── */
-function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; onItemMove?: (id: string, dir: -1 | 1) => void; onItemReorder?: (fromId: string, toId: string) => void; going: boolean }) {
+function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; going: boolean }) {
   const items = card.items ?? [];
   const nextIdx = items.findIndex((it) => !it.done);
   const title = LIST_TITLE[card.type];
@@ -219,18 +216,12 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
   const [adding, setAdding] = useState(false);
   const [addTitle, setAddTitle] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
-  // 2026-08-09：拖拽排序（HTML5 DnD，同级内重排）
-  const [dragId, setDragId] = useState<string | null>(null);
   const submitAdd = () => {
     const v = addTitle.trim();
     if (!v) return;
     onItemAdd?.(v);
     setAddTitle("");
     setAdding(false);
-  };
-  const sortable = !!onItemMove || !!onItemReorder;
-  const onDropTo = (targetId: string) => {
-    if (dragId && dragId !== targetId) { onItemReorder?.(dragId, targetId); setDragId(null); }
   };
   return (
     <div className="rounded-lg mt-1.5" style={{ background: "#fff9e6", borderLeft: "3px solid #f5a623", padding: "7px 6px" }}>
@@ -276,15 +267,7 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
           {items.map((it, i) => {
             const isNext = i === nextIdx;
             return (
-              <li
-                key={it.id}
-                draggable={sortable && !it.done}
-                onDragStart={(e) => { if (sortable && !it.done) { setDragId(it.id); e.dataTransfer.effectAllowed = "move"; } }}
-                onDragOver={(e) => { if (dragId && dragId !== it.id && !it.done) e.preventDefault(); }}
-                onDrop={() => onDropTo(it.id)}
-                onDragEnd={() => setDragId(null)}
-                className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm ${dragId === it.id ? "opacity-50" : ""}`}
-                style={{ background: "rgba(255,255,255,0.55)", ...(isNext && going ? { background: "var(--v2-brand-bg)", borderLeft: "4px solid var(--v2-brand)", fontWeight: 600, color: "var(--v2-text)" } : {}), ...(it.done ? { color: "var(--v2-text3)", opacity: 0.65 } : {}) }}>
+              <li key={it.id} className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm" style={{ background: "rgba(255,255,255,0.55)", ...(isNext && going ? { background: "var(--v2-brand-bg)", borderLeft: "4px solid var(--v2-brand)", fontWeight: 600, color: "var(--v2-text)" } : {}), ...(it.done ? { color: "var(--v2-text3)", opacity: 0.65 } : {}) }}>
                 <button
                   onClick={() => onItemToggle?.(it.id)}
                   disabled={!onItemToggle}
@@ -293,27 +276,7 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
                   {it.done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                 </button>
                 <span className={it.done ? "line-through" : ""} style={{ color: it.done ? "var(--v2-text3)" : undefined }}>{it.text}</span>
-                {it.minutes != null && <span className="text-[10px] tabular-nums text-[var(--v2-text3)]">{it.minutes}分</span>}
-                {/* 2026-08-09：执行项排序（上移/下移 + 拖拽手柄）——实时保存并同步 project */}
-                {sortable && !it.done && (
-                  <span className="ml-auto flex items-center gap-0.5 shrink-0">
-                    <button
-                      title="上移" aria-label="上移"
-                      disabled={i === 0}
-                      onClick={(e) => { e.stopPropagation(); onItemMove?.(it.id, -1); }}
-                      className="w-[18px] h-[18px] rounded flex items-center justify-center text-[11px] leading-none transition disabled:opacity-30"
-                      style={{ color: "#8b6914", background: "rgba(245,166,35,0.12)" }}
-                    >↑</button>
-                    <button
-                      title="下移" aria-label="下移"
-                      disabled={i === items.length - 1}
-                      onClick={(e) => { e.stopPropagation(); onItemMove?.(it.id, 1); }}
-                      className="w-[18px] h-[18px] rounded flex items-center justify-center text-[11px] leading-none transition disabled:opacity-30"
-                      style={{ color: "#8b6914", background: "rgba(245,166,35,0.12)" }}
-                    >↓</button>
-                    <span title="拖拽排序" style={{ color: "#d4a853", cursor: onItemReorder ? "grab" : "default" }} className="text-[13px] select-none">⠿</span>
-                  </span>
-                )}
+                {it.minutes != null && <span className="ml-auto text-[10px] tabular-nums text-[var(--v2-text3)]">{it.minutes}分</span>}
               </li>
             );
           })}
@@ -324,7 +287,7 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
 }
 
 /* ── 主组件 ── */
-export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd, onItemMove, onItemReorder, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo }: Props) {
+export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo }: Props) {
   // 内部状态机：demo 模式或真实卡（出发/暂停为本地模拟）
   // 收尾批次 B：忘记确认提示条（session 级关闭，不持久化）
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -584,14 +547,14 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
                   <div className="h-full rounded-full" style={{ width: `${(doneCount / totalCount) * 100}%`, background: color }} />
                 </div>
                 {/* 执行清单（v2-memo）——始终在右栏执行区 */}
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} going={going} />
               </div>
             )}
 
             {card.type === "accum-weekly" && (
               <div className="mt-2">
                 <div className="flex items-center text-[10.5px] text-[var(--v2-text3)] mb-1">今日练 <b className="text-[var(--v2-text2)] ml-1">{(card.items ?? []).length} 个动作</b></div>
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} going={going} />
               </div>
             )}
 

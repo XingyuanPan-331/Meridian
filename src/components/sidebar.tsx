@@ -50,7 +50,7 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
   }, []);
 
   return (
-    <aside className={`${w} bg-page-sidebar text-page-sidebar flex flex-col h-full shrink-0 transition-all duration-200 hidden lg:flex`}>
+    <aside className={`${w} bg-[var(--page-sidebar)] text-[var(--page-sidebar-text)] flex flex-col h-full shrink-0 transition-all duration-200 hidden lg:flex`}>
       {/* Brand row — 64px 与顶栏统一（Meridian 品牌 · C 方案 Logo） */}
       <div className="flex items-center justify-between p-5 border-b border-white/10 h-16 shrink-0">
         <div className="flex items-center gap-3">
@@ -61,7 +61,7 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
         </div>
         <button
           onClick={onToggle}
-          className={`text-page-sidebar/35 hover:text-page-sidebar/60 transition ${collapsed ? "mx-auto" : ""}`}
+          className={`text-[var(--page-sidebar-text)]/35 hover:text-[var(--page-sidebar-text)]/60 transition ${collapsed ? "mx-auto" : ""}`}
           title={collapsed ? "展开" : "收起"}
         >
           <ToggleIcon collapsed={collapsed} />
@@ -86,10 +86,10 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
               } ${
                 active
                   ? "bg-brand-600 text-white font-medium sh-glow"
-                  : "text-page-sidebar/60 hover:bg-white/6 hover:text-page-sidebar"
+                  : "text-[var(--page-sidebar-text)]/60 hover:bg-white/6 hover:text-[var(--page-sidebar-text)]"
               }`}>
               <span className="shrink-0" style={{ width: 20, height: 20 }}>
-                <Icon size={20} className={active ? "text-brand-200" : "text-page-sidebar/45"} />
+                <Icon size={20} className={active ? "text-brand-200" : "text-[var(--page-sidebar-text)]/45"} />
               </span>
               {!collapsed && (
                 <div className="flex flex-col min-w-0">
@@ -97,7 +97,7 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
                     {label}
                     {isDefault && <span className="text-xs px-1.5 py-px rounded bg-white/12 text-brand-200 font-normal">{lang === "zh" ? "默认" : "Default"}</span>}
                   </span>
-                  <span className={`text-xs leading-tight ${active ? "text-brand-200" : "text-page-sidebar/35"}`}>{sub}</span>
+                  <span className={`text-xs leading-tight ${active ? "text-brand-200" : "text-[var(--page-sidebar-text)]/35"}`}>{sub}</span>
                 </div>
               )}
             </Link>
@@ -113,10 +113,10 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
           } ${
             pathname === "/settings"
               ? "bg-brand-600 text-white sh-glow"
-              : "text-page-sidebar/60 hover:bg-white/6 hover:text-page-sidebar"
+              : "text-[var(--page-sidebar-text)]/60 hover:bg-white/6 hover:text-[var(--page-sidebar-text)]"
           }`}>
           <span className="shrink-0" style={{ width: 20, height: 20 }}>
-            <SettingsIcon size={20} className={pathname === "/settings" ? "text-brand-200" : "text-page-sidebar/45"} />
+            <SettingsIcon size={20} className={pathname === "/settings" ? "text-brand-200" : "text-[var(--page-sidebar-text)]/45"} />
           </span>
           {!collapsed && <span className="leading-tight">设置</span>}
         </Link>
@@ -136,7 +136,7 @@ export function Sidebar({ userName, collapsed, onToggle }: SidebarProps) {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{userName}</p>
             </div>
-            <button onClick={() => signOut({ callbackUrl: "/login" })} className="text-page-sidebar/45 hover:text-page-sidebar/80 transition p-1" title="退出登录">
+            <button onClick={() => signOut({ callbackUrl: "/login" })} className="text-[var(--page-sidebar-text)]/45 hover:text-[var(--page-sidebar-text)]/80 transition p-1" title="退出登录">
               <LogOutIcon size={16} />
             </button>
           </div>

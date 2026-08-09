@@ -246,13 +246,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Bug2 修复：完成父任务时同步完成第一个未完成子任务（执行清单当前高亮项），
     // 保证"标记完成"时执行清单与专注时间一起更新（原实现只补记时长，清单项不勾选）
-    const nextChild = await prisma.task.findFirst({
-      where: { userId: session.user.id, parentId: id, status: { notIn: ["completed", "cancelled"] } },
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-      select: { id: true },
-    });
-    if (nextChild) {
-      await prisma.task.update({ where: { id: nextChild.id }, data: { status: "completed", completedAt: new Date() } });
+    // 2026-08-09：手动单项完成（带 completedAt，project 树填写完成时间）不触发该联动——
+    // 用户明确只完成指定项，父任务完成不应再自动勾选子项（否则"点一项 → 子项跟着完成"的困惑）
+    if (completedAt === undefined) {
+      const nextChild = await prisma.task.findFirst({
+        where: { userId: session.user.id, parentId: id, status: { notIn: ["completed", "cancelled"] } },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true },
+      });
+      if (nextChild) {
+        await prisma.task.update({ where: { id: nextChild.id }, data: { status: "completed", completedAt: new Date() } });
+      }
     }
 
     // V5 D2：完成联动（兄弟全完成 → 父递归自动完成）

@@ -59,13 +59,15 @@ export async function getTodayTimeline(userId: string): Promise<TimelineItem[]> 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
 
+  // 2026-08-09：过滤已完成/已取消任务——已确定的完成项不应再出现在今日路线
+  // （原实现只看排期，completed 任务当天有排期仍显示 → "已完成还在进行中"）
   const schedules = await prisma.schedule.findMany({
-    where: { userId, scheduledStart: { gte: today, lt: tomorrow } },
+    where: { userId, scheduledStart: { gte: today, lt: tomorrow }, task: { status: { notIn: ["completed", "cancelled"] } } },
     orderBy: { scheduledStart: "asc" },
     include: { task: { select: { title: true } } },
   });
 
-  return schedules.map(s => ({
+  return schedules.filter((s) => s.task).map(s => ({
     taskId: s.taskId,
     title: s.task.title,
     start: s.scheduledStart.toISOString(),

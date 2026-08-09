@@ -72,6 +72,3 @@ next-env.d.ts
 /meridian-launcher.log
 /meridian-dev.log
 /meridian-dev.pid
-.next
-.next-feature
-.next-*

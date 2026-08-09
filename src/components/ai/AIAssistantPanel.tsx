@@ -38,7 +38,7 @@ export function AIAssistantPanel({
 }: AIAssistantPanelProps) {
   const s = statusConfig[status];
   return (
-    <div className={`bg-[var(--v2-card)] rounded-2xl border border-[var(--page-border)] sh-card flex flex-col overflow-hidden ${className}`}>
+    <div className={`bg-[var(--v2-card)] rounded-2xl border border-page-border sh-card flex flex-col overflow-hidden ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-50">
         <div className="flex items-center gap-2.5">

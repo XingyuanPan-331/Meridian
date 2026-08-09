@@ -20,7 +20,7 @@ export function LoadingState({ type = "card", count = 3, className = "" }: Loadi
       return (
         <div className={`space-y-4 ${className}`}>
           {Array.from({ length: count }).map((_, i) => (
-            <div key={i} className="bg-[var(--v2-card)] rounded-2xl border border-[var(--page-border)] sh-card p-5 space-y-3">
+            <div key={i} className="bg-[var(--v2-card)] rounded-2xl border border-page-border sh-card p-5 space-y-3">
               <Skeleton className="h-4 w-1/3" />
               <Skeleton className="h-6 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
@@ -33,7 +33,7 @@ export function LoadingState({ type = "card", count = 3, className = "" }: Loadi
       return (
         <div className={`space-y-2 ${className}`}>
           {Array.from({ length: count }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 bg-[var(--v2-card)] rounded-xl border border-[var(--page-border)] sh-card px-4 py-3">
+            <div key={i} className="flex items-center gap-3 bg-[var(--v2-card)] rounded-xl border border-page-border sh-card px-4 py-3">
               <Skeleton className="w-5 h-5 rounded-full" />
               <Skeleton className="h-4 flex-1" />
               <Skeleton className="h-3 w-12" />

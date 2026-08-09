@@ -59,7 +59,7 @@ export function ThemeSwitcher({ collapsed = false }: ThemeSwitcherProps) {
       </button>
 
       {open && (
-        <div className={`absolute bottom-full left-0 mb-1 bg-[var(--page-sidebar)] border border-white/10 rounded-xl shadow-xl z-50 ${collapsed ? "w-48" : "w-56"}`}>
+        <div className={`absolute bottom-full left-0 mb-1 bg-page-sidebar border border-white/10 rounded-xl shadow-xl z-50 ${collapsed ? "w-48" : "w-56"}`}>
           {/* Axis tabs */}
           <div className="flex border-b border-white/10">
             {axisTabs.map(t => (

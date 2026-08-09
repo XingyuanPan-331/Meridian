@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 export type FcV2Phase = "unstarted" | "going" | "confirm" | "done";
 export type FcV2Type = "timer" | "checklist" | "learning" | "accum-daily" | "accum-weekly";
 
-export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; completedAt?: string }
+export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; completedAt?: string; startedAt?: string }
 export interface FocusCardV2Data {
   id: string;
   type: FcV2Type;
@@ -58,6 +58,8 @@ interface Props {
   onItemReorder?: (fromId: string, toId: string) => void;
   /** 2026-08-09：主卡"完成"在清单有未完成项时=完成当前高亮项（耗时弹窗确认后，min=该项耗时分钟） */
   onCompleteItem?: (min: number) => void;
+  /** 2026-08-09：清单项独立计时——点「开始」记录该项开始时间（子项 departureAt） */
+  onItemStart?: (itemId: string) => void;
   onCheckin?: (detail?: string) => void;
   onSkip?: () => void;
   onPause?: (reason: string) => void;
@@ -225,7 +227,7 @@ function ModalFoot({ onOk, onCancel, okText = "确定" }: { onOk: () => void; on
 }
 
 /* ── 清单（v2-memo 样式：底 #fff9e6 / 左边条 #f5a623 / 标题字 #8b6914 / 勾选框 #d4a853 + 小标题虚线） ── */
-function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; onItemMove?: (id: string, dir: -1 | 1) => void; onItemReorder?: (fromId: string, toId: string) => void; going: boolean }) {
+function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, onItemStart, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; onItemMove?: (id: string, dir: -1 | 1) => void; onItemReorder?: (fromId: string, toId: string) => void; onItemStart?: (id: string) => void; going: boolean }) {
   const items = card.items ?? [];
   const nextIdx = items.findIndex((it) => !it.done);
   const title = LIST_TITLE[card.type];
@@ -307,11 +309,25 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
                   {it.done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                 </button>
                 <span className={it.done ? "line-through" : ""} style={{ color: it.done ? "var(--v2-text3)" : undefined }}>{it.text}</span>
-                {/* 2026-08-09（BUG-057-2）：清单项耗时展示 = 完成时间 − 任务出发时间（后端计算） */}
+                {/* 2026-08-09（BUG-057-4）：清单项耗时 = 该项完成时间 − 该项自己开始时间（后端计算） */}
                 {it.done && it.minutes != null && (
                   <span className="text-[10px] tabular-nums text-[var(--v2-text3)]"
-                    title={it.completedAt ? `完成于 ${new Date(it.completedAt).toTimeString().slice(0, 5)} · 用时 ${it.minutes} 分` : `用时 ${it.minutes} 分`}>
+                    title={`开始于 ${it.startedAt ? new Date(it.startedAt).toTimeString().slice(0, 5) : "—"} · 完成于 ${it.completedAt ? new Date(it.completedAt).toTimeString().slice(0, 5) : "—"} · 用时 ${it.minutes} 分`}>
                     {it.minutes}分
+                  </span>
+                )}
+                {/* 2026-08-09（BUG-057-4）：未开始项显示「开始」按钮（独立计时）；进行中项显示开始时刻 */}
+                {!it.done && onItemStart && !it.startedAt && (
+                  <button
+                    title="开始该项（记录该项起始时间，独立计时）" aria-label="开始"
+                    onClick={(e) => { e.stopPropagation(); onItemStart(it.id); }}
+                    className="text-[10px] px-1.5 py-px rounded-md font-medium shrink-0 transition"
+                    style={{ color: "#15803d", background: "rgba(22,163,74,0.1)" }}
+                  >开始</button>
+                )}
+                {!it.done && it.startedAt && (
+                  <span className="text-[10px] tabular-nums text-[var(--v2-text3)]" title={`该项开始于 ${new Date(it.startedAt).toTimeString().slice(0, 5)}`}>
+                    开始于 {new Date(it.startedAt).toTimeString().slice(0, 5)}
                   </span>
                 )}
                 {/* 2026-08-09：执行项排序（上移/下移 + 拖拽手柄）——实时保存并同步 project */}
@@ -344,7 +360,7 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
 }
 
 /* ── 主组件 ── */
-export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemToggle, onItemAdd, onItemMove, onItemReorder, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo }: Props) {
+export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemStart, onItemToggle, onItemAdd, onItemMove, onItemReorder, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo }: Props) {
   // 内部状态机：demo 模式或真实卡（出发/暂停为本地模拟）
   // 收尾批次 B：忘记确认提示条（session 级关闭，不持久化）
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -619,14 +635,14 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
                   <div className="h-full rounded-full" style={{ width: `${(doneCount / totalCount) * 100}%`, background: color }} />
                 </div>
                 {/* 执行清单（v2-memo）——始终在右栏执行区 */}
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} onItemStart={onItemStart} going={going} />
               </div>
             )}
 
             {card.type === "accum-weekly" && (
               <div className="mt-2">
                 <div className="flex items-center text-[10.5px] text-[var(--v2-text3)] mb-1">今日练 <b className="text-[var(--v2-text2)] ml-1">{(card.items ?? []).length} 个动作</b></div>
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} onItemStart={onItemStart} going={going} />
               </div>
             )}
 
@@ -672,7 +688,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
       </div>
 
       {/* 弹窗 */}
-      {durModal && <DurationModal departureAt={departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
+      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? departureAt) : departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
       {pauseModal && <PauseModal onConfirm={pauseConfirm} onClose={() => setPauseModal(false)} />}
       {checkinModal && <CheckinModal card={card} onConfirm={confirmCheckin} onClose={() => setCheckinModal(false)} />}
     </div>

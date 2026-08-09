@@ -18,14 +18,28 @@ import { themeColor } from "@/lib/task/theme";
 
 // ── V5 层级重构：执行清单构建（就近两级） ──
 // 来源优先级：直接子级（真实执行项）> 备注拆行（备忘步骤）> 任务自身
-async function buildChecklist(userId: string, taskId: string, title: string, description: string | null) {
+async function buildChecklist(userId: string, taskId: string, title: string, description: string | null, taskDepartureAt: Date | null = null) {
   const children = await prisma.task.findMany({
     where: { userId, parentId: taskId },
-    select: { id: true, title: true, completedAt: true },
+    select: { id: true, title: true, completedAt: true, departureAt: true },
     orderBy: { sortOrder: "asc" },
   });
   if (children.length > 0) {
-    return children.map(c => ({ id: c.id, text: c.title, done: !!c.completedAt, group: null, noteStep: false, self: false }));
+    // 2026-08-09（BUG-057-4）：清单项耗时 = 该项完成时间 − 该项自己的开始时间（子项 departureAt）。
+    // 用户实际体验：每项独立计时（做 A 记 A、做 B 记 B）；子项无开始时间时兜底用任务出发时间。
+    // 边界：完成早于开始 → max(0) 归零；开始缺失 → minutes=null（界面显示 —）。
+    return children.map(c => {
+      const start = c.departureAt ?? taskDepartureAt;
+      return {
+        id: c.id, text: c.title, done: !!c.completedAt, group: null, noteStep: false, self: false,
+        completedAt: c.completedAt?.toISOString() || null,
+        // 该项开始时间（子项自己的 departureAt；未开始为 null）
+        startedAt: c.departureAt?.toISOString() || null,
+        minutes: c.completedAt && start
+          ? Math.max(0, Math.round((c.completedAt.getTime() - start.getTime()) / 60000))
+          : null,
+      };
+    });
   }
   // 备注拆行兜底（D1：简单任务清单 = 备注按行拆；done 由前端 localStorage 维护）
   const lines = (description || "").split("\n").map(s => s.trim()).filter(Boolean);
@@ -54,12 +68,12 @@ async function buildAncestorChain(userId: string, taskId: string | null): Promis
 // 当前任务卡片（V5：就近两级 + 积累卡片数据；V3：+theme/themeColor；FCV2：+purpose/+departureAt）
 async function buildCurrentTaskCard(
   userId: string,
-  task: { id: string; title: string; description: string | null; taskType: string; category: string | null; theme: string | null; purpose: string | null; departureAt: Date | null; parentId: string | null; level: string | null; accumulate: boolean },
+  task: { id: string; title: string; description: string | null; taskType: string; category: string | null; theme: string | null; purpose: string | null; departureAt: Date | null; parentId: string | null; level: string | null; accumulate: boolean; status: string },
   schedule: { scheduledStart: Date; scheduledEnd: Date | null } | undefined,
   extra: { elapsedMinutes: number; plannedMinutes: number; completionPercent: number }
 ) {
   const [children, ancestorChain, purpose] = await Promise.all([
-    buildChecklist(userId, task.id, task.title, task.description),
+    buildChecklist(userId, task.id, task.title, task.description, task.departureAt),
     buildAncestorChain(userId, task.parentId),
     resolvePurposeFinal(userId, task),
   ]);
@@ -67,6 +81,8 @@ async function buildCurrentTaskCard(
     id: task.id, title: task.title,
     description: task.description,
     taskType: task.taskType, category: task.category,
+    // 2026-08-09：任务状态回传（前端 toCardV2 据此判断 done——原用 taskType 判断完成导致永远不显示"已完成"）
+    status: task.status,
     // V3 C5：主题 + 配色（档案/Focus Card 消费）
     theme: task.theme,
     themeColor: task.theme ? themeColor(task.theme) : null,
@@ -121,9 +137,11 @@ async function lazySettleExpiredScheduled(userId: string, now = new Date()) {
 
   let settled = 0;
   for (const task of candidates) {
-    // 最近一条排期（含已结束的过去排期）
+    // BUG-20260808-055：只找最近一条【已过期】的排期（scheduledEnd < now）——
+    // 原实现取"最近排期"（含未来续排），若任务被 AI pipeline/续排到未来时段，
+    // 最近排期未过期 → 跳过 → 今天已过期的时段永不结算 → 过期 scheduled 占主卡。
     const last = await prisma.schedule.findFirst({
-      where: { taskId: task.id, userId },
+      where: { taskId: task.id, userId, scheduledEnd: { lt: now } },
       orderBy: { scheduledStart: "desc" },
     });
     if (!last?.scheduledEnd || last.scheduledEnd >= now) continue;
@@ -224,7 +242,7 @@ export async function GET() {
       if (cs.scheduledStart > now || (cs.scheduledEnd && cs.scheduledEnd < now)) continue;
       const t = await prisma.task.findFirst({
         where: { id: cs.taskId, userId, status: { notIn: ["completed", "cancelled"] } },
-        select: { id: true, title: true, description: true, taskType: true, category: true, theme: true, purpose: true, departureAt: true, parentId: true, level: true, accumulate: true },
+        select: { id: true, title: true, description: true, taskType: true, category: true, theme: true, purpose: true, departureAt: true, parentId: true, level: true, accumulate: true, status: true },
       });
       if (t) {
         // 修复：Priority 2 的"预计"必须按排期时长算（原硬编码 0 → Focus Card 显示待排期/0 分钟）
@@ -266,7 +284,7 @@ export async function GET() {
   // 否则 currentTask 为空时前端 children=[] → hasChildren=false → 误判"知识点"且清单消失）
   const enhanceCard = async (m: { taskId: string; title: string }) => {
     // BUG-20260808-054：三查询并行（Neon 跨洋延迟下串行 3 次 = 每卡 +600ms）
-    const [task, children, purpose] = await Promise.all([
+    const [task, rawChildren, purpose] = await Promise.all([
       prisma.task.findUnique({
         where: { id: m.taskId },
         select: { id: true, title: true, description: true, taskType: true, category: true, theme: true, purpose: true, departureAt: true, parentId: true, level: true, accumulate: true, status: true },
@@ -276,12 +294,20 @@ export async function GET() {
       // 被拆成 1 个清单项 → 前端 hasChildren=true → 误判为清单型卡。真实无子任务 → learning 卡。
       prisma.task.findMany({
         where: { userId, parentId: m.taskId },
-        select: { id: true, title: true, completedAt: true },
+        select: { id: true, title: true, completedAt: true, departureAt: true },
         orderBy: { sortOrder: "asc" },
-      }).then((list) => list.map((c) => ({ id: c.id, text: c.title, done: !!c.completedAt, group: null, noteStep: false, self: false }))),
+      }).then((list) => list.map((c) => ({ id: c.id, text: c.title, done: !!c.completedAt, group: null, noteStep: false, self: false, completedAt: c.completedAt?.toISOString() || null, startedAt: c.departureAt?.toISOString() || null }))),
       resolvePurposeFinal(userId, { purpose: null, parentId: m.taskId }).catch(() => null),
     ]);
     if (!task) return m;
+    // 2026-08-09（BUG-057-4）：清单项耗时 = 完成时间 − 该项自己的开始时间（子项 departureAt，兜底任务出发）
+    const dep = task.departureAt ? new Date(task.departureAt).getTime() : null;
+    const children = rawChildren.map((c) => ({
+      ...c,
+      minutes: c.completedAt && (c.startedAt || dep !== null)
+        ? Math.max(0, Math.round((new Date(c.completedAt).getTime() - (c.startedAt ? new Date(c.startedAt).getTime() : (dep as number))) / 60000))
+        : null,
+    }));
     const sched = todaySchedules.find((s) => s.taskId === m.taskId);
     return {
       ...m,

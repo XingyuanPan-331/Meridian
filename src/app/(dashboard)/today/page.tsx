@@ -641,7 +641,7 @@ export default function TodayPage() {
     finally { setBusy(false); }
   }, [data, routeSelTask, load, failToast]);
 
-  // 2026-08-09：「该项完成」带耗时——完成清单子项，completedAt 由调用方推算（出发+耗时）
+  // 2026-08-09：「该项完成」带耗时——完成清单子项，completedAt 由调用方推算（该项开始+耗时）
   const completeItemWithTime = useCallback(async (parentId: string, childId: string, completedAt: string) => {
     setBusy(true);
     try {
@@ -650,7 +650,23 @@ export default function TodayPage() {
         body: JSON.stringify({ action: "complete", completedAt }),
       });
       if (!r.ok) throw new Error("操作失败");
-      okToast("已勾选该项 · 自动高亮下一项");
+      okToast("已勾选该项 · 下一项自动开始计时");
+      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
+      await load();
+    } catch { failToast("操作失败，请重试"); }
+    finally { setBusy(false); }
+  }, [load, failToast, okToast]);
+
+  // 2026-08-09：清单项独立计时——点「开始」记录该项开始时间（子项 departureAt）
+  const startChildItem = useCallback(async (childId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/tasks/${childId}/action`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start" }),
+      });
+      if (!r.ok) throw new Error("操作失败");
+      okToast("该项已开始计时");
       window.dispatchEvent(new CustomEvent("meridian-task-changed"));
       await load();
     } catch { failToast("操作失败，请重试"); }
@@ -898,17 +914,19 @@ export default function TodayPage() {
             onItemMove={(childId, dir) => moveItem(cur.card.id, childId, dir)}
             onItemReorder={(fromId, toId) => reorderViaDrag(cur.card.id, fromId, toId)}
             // 2026-08-09：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
-            // completedAt = 任务出发时间 + 用户填的耗时（保证清单项耗时展示 = 用户填写值）
+            // completedAt = 该项自己开始时间（startedAt，兜底任务出发）+ 用户填的耗时
             onCompleteItem={(min) => {
               const items = cur.cardV2.items ?? [];
               const next = items.find((i) => !i.done);
               if (!next) return;
-              const dep = cur.cardV2.departureAt;
-              const completedAt = dep
-                ? new Date(new Date(dep).getTime() + Math.max(1, min) * 60000).toISOString()
+              const start = next.startedAt ?? cur.cardV2.departureAt;
+              const completedAt = start
+                ? new Date(new Date(start).getTime() + Math.max(1, min) * 60000).toISOString()
                 : new Date().toISOString();
               completeItemWithTime(cur.card.id, next.id, completedAt);
             }}
+            // 2026-08-09：清单项独立计时——点「开始」记录该项开始时间
+            onItemStart={(itemId) => startChildItem(itemId)}
             onContinueTomorrow={() => continueTomorrow(cur.card.id)}
             busy={busy}
           />

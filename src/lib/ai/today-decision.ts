@@ -16,14 +16,20 @@ export async function generateTodayDecision(userId: string): Promise<TodayDecisi
 
   const [allTasks, schedules, userState] = await Promise.all([
     prisma.task.findMany({
-      // BUG-20260808-054：mustDo 候选只考虑【顶层任务】（parentId=null）——
-      // ① 子任务（清单项）由父任务承载执行，永不直接进 mustDo；
-      // ② 孤儿子任务（父已删）自然排除；③ inbox 类型（未确认想法）排除。
+      // BUG-20260808-054/055：mustDo 候选过滤——
+      // ① 顶层任务（parentId=null）：正常入选；
+      // ② 挂载在 project/phase 级下、且父不是 ★ 执行清单的任务（项目内任务，如 12 环节3 挂树的 D）：入选；
+      // ③ 挂在 ★ 执行清单父任务下的子项（如采购元器件 7 子项）：由父清单承载执行，永不直接进 mustDo；
+      // ④ 孤儿子任务（父已删除，parent 解析为 null）：自然排除；
+      // ⑤ inbox 类型（未确认想法）：排除。
       where: {
         userId,
         status: { in: ["not_started", "in_progress", "delayed"] },
         taskType: { not: "inbox" },
-        parentId: null,
+        OR: [
+          { parentId: null },
+          { parent: { level: { in: ["project", "phase"] }, star: false } },
+        ],
       },
       orderBy: [{ importance: "desc" }, { deadline: "asc" }],
     }),

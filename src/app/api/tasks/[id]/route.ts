@@ -255,9 +255,8 @@ export async function DELETE(
 
   const existing = await prisma.task.findFirst({ where: { id, userId: session.user.id } });
   if (!existing) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
-  if (existing.status === "completed") {
-    return badRequest("已完成的任务不可删除（成长记录永久保留）");
-  }
+  // 2026-08-09：放开"已完成任务不可删除"——Project 页提供「移除已完成清单」入口
+  // （原产品理念为成长记录永久保留，但用户明确要求可移除已完成清单 → 用户最终控制权）
 
   // BUG-20260808-054（原 BUG-051）：递归收集全部子孙（多级），显式级联删除——
   // 数据库外键级联不可靠（实测父删子孙残留为孤儿 → 孤儿子任务混入 mustDo 抢占主卡）。

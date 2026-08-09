@@ -38,8 +38,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const existing = await prisma.task.findFirst({ where: { id, userId: session.user.id } });
   if (!existing) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
 
-  let action: string, snoozeUntil: string | undefined, postponeDays: number | undefined, rescheduleDate: string | undefined, reason: string | undefined, newStart: string | undefined, newEnd: string | undefined, durationMinutes: number | undefined;
-  try { const body = await req.json(); action = body.action; snoozeUntil = body.snoozeUntil; postponeDays = body.postponeDays; rescheduleDate = body.rescheduleDate; reason = body.reason; newStart = body.newStart; newEnd = body.newEnd; durationMinutes = body.durationMinutes; } catch { return badRequest("请求格式错误"); }
+  let action: string, snoozeUntil: string | undefined, postponeDays: number | undefined, rescheduleDate: string | undefined, reason: string | undefined, newStart: string | undefined, newEnd: string | undefined, durationMinutes: number | undefined, completedAt: string | undefined;
+  try { const body = await req.json(); action = body.action; snoozeUntil = body.snoozeUntil; postponeDays = body.postponeDays; rescheduleDate = body.rescheduleDate; reason = body.reason; newStart = body.newStart; newEnd = body.newEnd; durationMinutes = body.durationMinutes; completedAt = body.completedAt; } catch { return badRequest("请求格式错误"); }
 
   const data: Record<string, unknown> = {};
   switch (action) {
@@ -82,11 +82,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       break;
     case "complete":
       if (existing.status === "cancelled") return badRequest("已取消的任务不可完成");
+      // 2026-08-09：支持手动填写完成时间（project 单项完成标注）——completedAt 由用户指定，
+      // 格式校验（ISO 可解析）；未传则默认当前时间。
+      let completeTime: Date;
+      if (completedAt !== undefined) {
+        if (typeof completedAt !== "string") return badRequest("完成时间格式错误");
+        const parsed = new Date(completedAt);
+        if (isNaN(parsed.getTime())) return badRequest("完成时间格式不合法，请使用「2026-08-09 10:30」或 ISO 格式");
+        completeTime = parsed;
+      } else {
+        completeTime = new Date();
+      }
       // 修复 P1-10：离开 snoozed 统一清 snoozeUntil
-      data.status = "completed"; data.completedAt = new Date(); data.snoozeUntil = null;
+      data.status = "completed"; data.completedAt = completeTime; data.snoozeUntil = null;
       // 修复 P1-16：完成写观察（学习闭环数据源）
       prisma.userObservation.create({
-        data: { userId: session.user.id, type: "task_complete", taskId: id, category: existing.category, detail: JSON.stringify({ actualMinutes: existing.actualMinutes, estimatedMinutes: existing.estimatedMinutes }) },
+        data: { userId: session.user.id, type: "task_complete", taskId: id, category: existing.category, detail: JSON.stringify({ actualMinutes: existing.actualMinutes, estimatedMinutes: existing.estimatedMinutes, completedAt: completeTime.toISOString() }) },
       }).catch(() => {});
       break;
     case "cancel":

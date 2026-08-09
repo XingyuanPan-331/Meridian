@@ -121,9 +121,11 @@ async function lazySettleExpiredScheduled(userId: string, now = new Date()) {
 
   let settled = 0;
   for (const task of candidates) {
-    // 最近一条排期（含已结束的过去排期）
+    // BUG-20260808-055：只找最近一条【已过期】的排期（scheduledEnd < now）——
+    // 原实现取"最近排期"（含未来续排），若任务被 AI pipeline/续排到未来时段，
+    // 最近排期未过期 → 跳过 → 今天已过期的时段永不结算 → 过期 scheduled 占主卡。
     const last = await prisma.schedule.findFirst({
-      where: { taskId: task.id, userId },
+      where: { taskId: task.id, userId, scheduledEnd: { lt: now } },
       orderBy: { scheduledStart: "desc" },
     });
     if (!last?.scheduledEnd || last.scheduledEnd >= now) continue;

@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 export type FcV2Phase = "unstarted" | "going" | "confirm" | "done";
 export type FcV2Type = "timer" | "checklist" | "learning" | "accum-daily" | "accum-weekly";
 
-export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number }
+export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; completedAt?: string }
 export interface FocusCardV2Data {
   id: string;
   type: FcV2Type;
@@ -131,26 +131,38 @@ function DurationModal({ departureAt, onConfirm, onClose }: { departureAt: strin
   }, [departureAt]);
   const [sel, setSel] = useState<number | "custom">(defaultMin <= 60 ? defaultMin : "custom");
   const [custom, setCustom] = useState(String(defaultMin));
+  const [err, setErr] = useState<string | null>(null); // 2026-08-09：输入校验提示
   const depLabel = departureAt ? new Date(departureAt).toTimeString().slice(0, 5) : "--:--";
+  // 2026-08-09（BUG-057-1）：确认前校验——正整数且 ≤1440 分钟（一天）；非法 → 提示并禁止提交
+  const ok = () => {
+    const v = sel === "custom" ? Number(custom) : sel;
+    if (!Number.isInteger(v) || v < 1 || v > 1440) {
+      setErr("请输入 1–1440 之间的整数分钟");
+      return;
+    }
+    setErr(null);
+    onConfirm(v);
+  };
   return (
     <Modal title="刚才做了多久？" onClose={onClose}>
       <div className="text-sm text-[var(--v2-text2)]">从 <b className="text-[var(--v2-text)]">{depLabel}</b> 出发 · 默认按到现在计算</div>
       <div className="flex gap-2 mt-2.5">
         {[30, 60].map((m) => (
-          <button key={m} onClick={() => setSel(m)}
+          <button key={m} onClick={() => { setSel(m); setErr(null); }}
             className={`flex-1 text-center border-[1.5px] rounded-lg py-2 text-sm font-semibold transition ${sel === m ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text2)]"}`}>
             {m === 30 ? "30 分钟" : "1 小时"}
           </button>
         ))}
-        <button onClick={() => setSel("custom")}
+        <button onClick={() => { setSel("custom"); setErr(null); }}
           className={`flex-1 text-center border-[1.5px] rounded-lg py-2 text-sm font-semibold transition ${sel === "custom" ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)]" : "border-[var(--v2-border)]"}`}>
-          <input value={custom} onChange={(e) => { setCustom(e.target.value); setSel("custom"); }}
+          <input value={custom} onChange={(e) => { setCustom(e.target.value); setSel("custom"); setErr(null); }}
             onClick={(e) => e.stopPropagation()}
             className="w-10 bg-transparent outline-none text-center text-sm font-semibold text-[var(--v2-text)]" placeholder="45" /> 分
         </button>
       </div>
+      {err && <div className="text-[12px] text-[#b91c1c] mt-2">{err}</div>}
       <div className="text-[10px] text-[var(--v2-text3)] mt-2">默认 = 现在 − 出发时刻，可修改</div>
-      <ModalFoot onOk={() => onConfirm(sel === "custom" ? Math.max(1, Number(custom) || 1) : sel)} onCancel={onClose} okText="确定" />
+      <ModalFoot onOk={ok} onCancel={onClose} okText="确定" />
     </Modal>
   );
 }
@@ -295,7 +307,13 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, go
                   {it.done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                 </button>
                 <span className={it.done ? "line-through" : ""} style={{ color: it.done ? "var(--v2-text3)" : undefined }}>{it.text}</span>
-                {it.minutes != null && <span className="text-[10px] tabular-nums text-[var(--v2-text3)]">{it.minutes}分</span>}
+                {/* 2026-08-09（BUG-057-2）：清单项耗时展示 = 完成时间 − 任务出发时间（后端计算） */}
+                {it.done && it.minutes != null && (
+                  <span className="text-[10px] tabular-nums text-[var(--v2-text3)]"
+                    title={it.completedAt ? `完成于 ${new Date(it.completedAt).toTimeString().slice(0, 5)} · 用时 ${it.minutes} 分` : `用时 ${it.minutes} 分`}>
+                    {it.minutes}分
+                  </span>
+                )}
                 {/* 2026-08-09：执行项排序（上移/下移 + 拖拽手柄）——实时保存并同步 project */}
                 {sortable && !it.done && (
                   <span className="ml-auto flex items-center gap-0.5 shrink-0">
@@ -361,6 +379,8 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
   // 完成清单里的项，不是整个任务）；全部勾完（或无子项）才走"完成整个任务"
   const pendingItems = card.items?.filter((i) => !i.done) ?? [];
   const hasPendingItem = card.type === "checklist" && pendingItems.length > 0;
+  // 2026-08-09：清单全部勾完 → going 阶段主按钮变为「完成」（弹耗时确认），不再停留"进行中…"
+  const allItemsDone = card.type === "checklist" && (card.items?.length ?? 0) > 0 && !hasPendingItem;
   const finishFlow = () => {
     if (hasPendingItem && onCompleteItem) { onCompleteItem(); return; }
     // 回来确认：非积累型弹补记时长；积累型弹打卡输入
@@ -410,7 +430,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemT
     : phase === "confirm"
       ? { text: hasPendingItem ? "完成当前项" : isAccum ? "打卡" : "完成", cls: "bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]", action: finishFlow }
       : going
-        ? { text: "进行中…", cls: "bg-[var(--v2-brand)] text-white opacity-85" }
+        ? { text: allItemsDone ? "完成" : "进行中…", cls: "bg-[var(--v2-brand)] text-white", action: allItemsDone ? finishFlow : undefined }
         : { text: isTimer ? "完成" : "出发", cls: `bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]`, action: isTimer ? finishFlow : go };
 
   const stateTag = done

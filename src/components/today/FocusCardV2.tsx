@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 export type FcV2Phase = "unstarted" | "going" | "confirm" | "done";
 export type FcV2Type = "timer" | "checklist" | "learning" | "accum-daily" | "accum-weekly";
 
-export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; completedAt?: string; startedAt?: string }
+export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; spanMinutes?: number; completedAt?: string; startedAt?: string }
 export interface FocusCardV2Data {
   id: string;
   type: FcV2Type;
@@ -312,8 +312,8 @@ function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, on
                 {/* 2026-08-09（BUG-057-4）：清单项耗时 = 该项完成时间 − 该项自己开始时间（后端计算） */}
                 {it.done && it.minutes != null && (
                   <span className="text-[10px] tabular-nums text-[var(--v2-text3)]"
-                    title={`开始于 ${it.startedAt ? new Date(it.startedAt).toTimeString().slice(0, 5) : "—"} · 完成于 ${it.completedAt ? new Date(it.completedAt).toTimeString().slice(0, 5) : "—"} · 用时 ${it.minutes} 分`}>
-                    {it.minutes}分
+                    title={`开始于 ${it.startedAt ? new Date(it.startedAt).toTimeString().slice(0, 5) : "—"} · 完成于 ${it.completedAt ? new Date(it.completedAt).toTimeString().slice(0, 5) : "—"} · 实际投入 ${it.minutes} 分${it.spanMinutes != null ? ` · 分配 ${it.spanMinutes} 分` : ""}`}>
+                    投入 {it.minutes}分
                   </span>
                 )}
                 {/* 2026-08-09（BUG-057-4）：未开始项显示「开始」按钮（独立计时）；进行中项显示开始时刻 */}
@@ -690,7 +690,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemS
       {/* 弹窗 */}
       {/* 2026-08-09（计时器重置 Bug）：item 模式默认值用「该项自己的开始时间」，不再兜底父任务出发——
           未开始项（无 startedAt）用初始默认（30 分钟），避免沿用父任务出发 3 小时前的 180 分钟 */}
-      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? null) : departureAt} title={durMode === "item" ? "这一项做了多久？" : "刚才做了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
+      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? null) : departureAt} title={durMode === "item" ? "这一项实际投入了多久？" : "这次实际投入了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
       {pauseModal && <PauseModal onConfirm={pauseConfirm} onClose={() => setPauseModal(false)} />}
       {checkinModal && <CheckinModal card={card} onConfirm={confirmCheckin} onClose={() => setCheckinModal(false)} />}
     </div>

@@ -108,7 +108,7 @@ function toCard(t: CurrentTask): { card: FocusCard; extra: { statText: string; t
       totalCount,
       progress: t.completionPercent ?? 0,
       elapsedMinutes: t.elapsedMinutes || 0,
-      items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
+      items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, spanMinutes: (c as { spanMinutes?: number }).spanMinutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
       aiExec: "",
       accumulate: t.accumulate || false,
       streak: t.streak ?? null,
@@ -231,7 +231,7 @@ function toCardV2(t: CurrentTask, trees: ProjTreeNode[] = []): FocusCardV2Data {
     elapsedMinutes: t.elapsedMinutes || 0,
     remainingMinutes: t.remainingMinutes || 0,
     progress: t.completionPercent ?? 0,
-    items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
+    items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, spanMinutes: (c as { spanMinutes?: number }).spanMinutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
     streak: t.streak ? { current: t.streak.current ?? 0, longest: t.streak.longest ?? 0 } : undefined,
     weekTarget: t.accumStats?.weekTarget,
     weekCount: t.accumStats?.weekCount,
@@ -641,13 +641,15 @@ export default function TodayPage() {
     finally { setBusy(false); }
   }, [data, routeSelTask, load, failToast]);
 
-  // 2026-08-09：「该项完成」带耗时——完成清单子项，completedAt 由调用方推算（该项开始+耗时）
-  const completeItemWithTime = useCallback(async (parentId: string, childId: string, completedAt: string) => {
+  // 2026-08-09（计时模型 V2）：「该项完成」带实际投入耗时——完成清单子项：
+  // ① completedAt = 后端确认时刻（now），不再用「该项开始+耗时」推算（消除"填 20 显示 30"矛盾）
+  // ② durationMinutes 随 body 落 TimeLog（实际投入 = 用户填的值，与分配段 completedAt−startedAt 分离）
+  const completeItemWithTime = useCallback(async (childId: string, min: number) => {
     setBusy(true);
     try {
       const r = await fetch(`/api/tasks/${childId}/action`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "complete", completedAt }),
+        body: JSON.stringify({ action: "complete", durationMinutes: Math.max(1, Math.round(min)) }),
       });
       if (!r.ok) throw new Error("操作失败");
       okToast("已勾选该项 · 下一项自动开始计时");
@@ -913,18 +915,14 @@ export default function TodayPage() {
             onItemAdd={(title) => addChildItem(cur.card.id, title)}
             onItemMove={(childId, dir) => moveItem(cur.card.id, childId, dir)}
             onItemReorder={(fromId, toId) => reorderViaDrag(cur.card.id, fromId, toId)}
-            // 2026-08-09（计时器重置 Bug）：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
-            // completedAt = 该项自己开始时间（startedAt）+ 用户填的耗时；
-            // 该项未开始（无 startedAt）→ 以当前时刻为完成时间（不再兜底父任务出发的旧值）
+            // 2026-08-09（计时模型 V2）：「该项完成」= 弹耗时 → 确认 → 完成当前清单项；
+            // completedAt = 后端确认时刻（now，用户实际完成时刻）；
+            // 用户填的耗时（min）= 实际投入 → 落 TimeLog（与分配段 completedAt−startedAt 分离）
             onCompleteItem={(min) => {
               const items = cur.cardV2.items ?? [];
               const next = items.find((i) => !i.done);
               if (!next) return;
-              const start = next.startedAt ?? null;
-              const completedAt = start
-                ? new Date(new Date(start).getTime() + Math.max(1, min) * 60000).toISOString()
-                : new Date().toISOString();
-              completeItemWithTime(cur.card.id, next.id, completedAt);
+              completeItemWithTime(next.id, min);
             }}
             // 2026-08-09：清单项独立计时——点「开始」记录该项开始时间
             onItemStart={(itemId) => startChildItem(itemId)}

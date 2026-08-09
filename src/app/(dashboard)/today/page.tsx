@@ -237,7 +237,9 @@ function toCardV2(t: CurrentTask, trees: ProjTreeNode[] = []): FocusCardV2Data {
     elapsedMinutes: t.elapsedMinutes || 0,
     remainingMinutes: t.remainingMinutes || 0,
     progress: t.completionPercent ?? 0,
-    items: children.map((c) => ({ id: c.id, text: c.text, done: c.done, minutes: (c as { minutes?: number }).minutes, spanMinutes: (c as { spanMinutes?: number }).spanMinutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
+    // 2026-08-10 勾选兜底：主任务已完成 → 清单项强制显示打勾（任务完成 = 清单全完成语义；
+    // 防"直接完成主任务但子项未联动"场景，如提前完成 P2 后清单勾选丢失）
+    items: children.map((c) => ({ id: c.id, text: c.text, done: !!c.done || t.status === "completed", minutes: (c as { minutes?: number }).minutes, spanMinutes: (c as { spanMinutes?: number }).spanMinutes, completedAt: (c as { completedAt?: string }).completedAt, startedAt: (c as { startedAt?: string }).startedAt })),
     streak: t.streak ? { current: t.streak.current ?? 0, longest: t.streak.longest ?? 0 } : undefined,
     weekTarget: t.accumStats?.weekTarget,
     weekCount: t.accumStats?.weekCount,

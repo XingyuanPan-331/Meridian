@@ -68,6 +68,9 @@ export async function GET(
 
   return NextResponse.json({
     ...task,
+    // 2026-08-10 勾选修复：children 派生 text/done（toCardV2 前置卡 items 依赖 done；
+    // Prisma 原始对象仅 title/completedAt → 勾选状态丢失）。保留原始字段不破坏档案面板消费。
+    children: task.children.map((c) => ({ ...c, text: c.title, done: !!c.completedAt })),
     theme: task.theme ?? null,
     purpose,
     departureAt: task.departureAt?.toISOString() ?? null,

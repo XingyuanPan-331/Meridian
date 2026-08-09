@@ -39,8 +39,7 @@ interface TreeNode {
   theme?: string | null;                                        // V3 落库主题（契约预留）
   themeColor?: { color: string; deep: string; bg: string } | null; // 后端派生色（契约预留；兼容 {pcolor,pbg,theme}）
   themeColorRaw?: string | null;                                // B7：自定义主题落库色 JSON（原始）
-  // 待整理池 AI 建议（后端为规则匹配对象 {targetId,targetTitle,reason}；前端转 label+projId）
-  suggestion?: { targetId: string; targetTitle: string; reason: string } | null;
+  suggestion?: string | null;                                   // 待整理池 AI 建议（契约预留）
 }
 interface TreeResponse {
   trees: TreeNode[];
@@ -129,8 +128,6 @@ const Ic = {
   plus: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>,
   up: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="12" height="12"><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></svg>,
   down: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></svg>,
-  // 2026-08-09：移除已完成清单 / 单项完成标注
-  trash: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>,
 };
 
 function Toast({ msg }: { msg: string | null }) {
@@ -159,12 +156,6 @@ export default function ProjectsPage() {
   const [orphanAcc, setOrphanAcc] = useState<TreeNode[]>([]); // 未挂树的积累型习惯
   const [archiveList, setArchiveList] = useState<TreeNode[]>([]);
   const [archiveOpen, setArchiveOpen] = useState(false);
-
-  // 2026-08-09：移除已完成清单（二次确认弹窗）+ 单项完成标注（手动完成时间弹窗）
-  const [removeTarget, setRemoveTarget] = useState<TreeNode | null>(null);
-  const [completeTarget, setCompleteTarget] = useState<TreeNode | null>(null);
-  const [completeTime, setCompleteTime] = useState("");
-  const [completeErr, setCompleteErr] = useState("");
 
   // 新建 inline input
   const [newOpen, setNewOpen] = useState(false);
@@ -342,50 +333,6 @@ export default function ProjectsPage() {
     } catch (err) { showToast(`操作失败：${(err as Error).message || "请重试"}`); }
   }, [trees, moveNode, load, showToast]);
 
-  // 2026-08-09：移除已完成清单（二次确认后删除，today 通过 meridian-task-changed 同步）
-  const confirmRemove = useCallback(async () => {
-    if (!removeTarget) return;
-    const t = removeTarget;
-    setRemoveTarget(null);
-    try {
-      const r = await fetch(`/api/tasks/${t.id}`, { method: "DELETE" });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.error || "删除失败");
-      }
-      showToast(`已移除「${t.title}」及其子项`);
-      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
-      await load(true);
-    } catch (err) { showToast(`移除失败：${(err as Error).message || "请重试"}`); }
-  }, [removeTarget, load, showToast]);
-
-  // 2026-08-09：单项完成标注——手动填写完成时间（日期+具体时间），校验后提交
-  const submitComplete = useCallback(async () => {
-    if (!completeTarget) return;
-    const v = completeTime.trim();
-    if (!v) { setCompleteErr("请填写完成时间"); return; }
-    // datetime-local 格式：YYYY-MM-DDTHH:mm（浏览器原生，含日期+具体时间）
-    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) { setCompleteErr("格式不合法，请选择日期与时间（如 2026-08-09 10:30）"); return; }
-    const d = new Date(v);
-    if (isNaN(d.getTime())) { setCompleteErr("日期时间无效，请重新选择"); return; }
-    const t = completeTarget;
-    setCompleteTarget(null);
-    setCompleteErr("");
-    try {
-      const r = await fetch(`/api/tasks/${t.id}/action`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "complete", completedAt: d.toISOString() }),
-      });
-      if (!r.ok) {
-        const dd = await r.json().catch(() => ({}));
-        throw new Error(dd.error || "操作失败");
-      }
-      showToast(`已完成「${t.title}」· ${v.replace("T", " ")}`);
-      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
-      await load(true);
-    } catch (err) { showToast(`标记失败：${(err as Error).message || "请重试"}`); }
-  }, [completeTarget, completeTime, load, showToast]);
-
   /* ── 拖拽 ── */
   const clearDrag = useCallback(() => {
     setDragId(null); setDragSource(null); setDragZone(null);
@@ -491,9 +438,7 @@ export default function ProjectsPage() {
   /* ── 行渲染（flatten + 连接线重算） ── */
   const visibleRows = useMemo(() => {
     const rows: { node: TreeNode; lvl: number; hasKids: boolean; isOpen: boolean }[] = [];
-    // BUG-20260808-055：树显示全部项目（project/phase 级无论完成与否）+ ★ 执行清单任务
-    // （task 级但标记执行清单的"清单项目"也显示——否则未挂树的执行清单会在树里"消失"）
-    const roots = trees.filter((t) => t.level !== "task" || t.star);
+    const roots = trees.filter((t) => t.level !== "task");
     const walk = (list: TreeNode[], lvl: number) => {
       list.forEach((n) => {
         const kids = n.children || [];
@@ -568,14 +513,6 @@ export default function ProjectsPage() {
           {lvl < 3 && <button title="新建子项" onClick={(e) => { e.stopPropagation(); newNode(node.id); }}>{Ic.plus}</button>}
           <button title="上移" onClick={(e) => { e.stopPropagation(); moveSibling(node, -1); }}>{Ic.up}</button>
           <button title="下移" onClick={(e) => { e.stopPropagation(); moveSibling(node, 1); }}>{Ic.down}</button>
-          {/* 2026-08-09：单项完成标注（手动填写完成时间）——未完成节点提供 */}
-          {!isDone && (
-            <button title="标记完成（填写完成时间）" onClick={(e) => { e.stopPropagation(); setCompleteTarget(node); setCompleteTime(""); setCompleteErr(""); }}>{Ic.check}</button>
-          )}
-          {/* 2026-08-09：移除已完成清单（二次确认）——已完成节点提供 */}
-          {isDone && (
-            <button title="移除已完成清单" onClick={(e) => { e.stopPropagation(); setRemoveTarget(node); }}>{Ic.trash}</button>
-          )}
         </span>
       </div>
     );
@@ -583,12 +520,7 @@ export default function ProjectsPage() {
 
   /* ── 待整理池 AI 建议（后端 suggestion 字段优先，未就绪前端推断） ── */
   const suggestionOf = useCallback((o: TreeNode): { projId: string | null; label: string } | null => {
-    // 2026-08-09 修复：后端 suggestion 是规则匹配对象（非 string）——转 label + projId（可一键归位）；
-    // 原实现把对象直接当 label 渲染 → React "Objects are not valid as a React child" 崩溃
-    if (o.suggestion) {
-      const s = o.suggestion;
-      return { projId: s.targetId, label: `AI 建议 → 挂入 ${s.targetTitle}` };
-    }
+    if (o.suggestion) return { projId: null, label: o.suggestion };
     const th = resolveTheme(null, o.title, o.category);
     const proj = th ? trees.find((t) => t.level === "project" && resolveTheme(null, t.title, t.category) === th) : null;
     if (proj) return { projId: proj.id, label: `AI 建议 → 挂入 ${proj.title}` };
@@ -658,43 +590,6 @@ export default function ProjectsPage() {
   return (
     <div className="max-w-[1080px] mx-auto space-y-4">
       <Toast msg={toastMsg} />
-
-      {/* 2026-08-09：移除已完成清单（二次确认弹窗） */}
-      {removeTarget && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/30 p-4" onClick={() => setRemoveTarget(null)}>
-          <div className="bg-white rounded-2xl p-5 w-[360px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="text-[15px] font-semibold mb-2">移除已完成清单</div>
-            <div className="text-sm text-[var(--v2-text2)] leading-relaxed mb-4">
-              确定移除「<b>{removeTarget.title}</b>」吗？该清单及其全部子项将被<strong className="text-[#b91c1c]">永久删除，不可恢复</strong>。
-            </div>
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setRemoveTarget(null)} className="px-3.5 py-1.5 text-sm rounded-lg border border-[var(--v2-border)] text-[var(--v2-text2)] hover:bg-[var(--color-gray-50)] transition">取消</button>
-              <button onClick={confirmRemove} className="px-3.5 py-1.5 text-sm rounded-lg bg-[#b91c1c] text-white hover:opacity-90 transition">确认移除</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2026-08-09：单项完成标注（手动填写完成时间 · 日期+具体时间 · 校验） */}
-      {completeTarget && (
-        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/30 p-4" onClick={() => setCompleteTarget(null)}>
-          <div className="bg-white rounded-2xl p-5 w-[380px] shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="text-[15px] font-semibold mb-1">标记完成「{completeTarget.title}」</div>
-            <div className="text-[12.5px] text-[var(--v2-text3)] mb-3">请填写实际完成时间（日期 + 具体时间），提交后 Today 同步显示</div>
-            <input
-              type="datetime-local"
-              value={completeTime}
-              onChange={(e) => { setCompleteTime(e.target.value); setCompleteErr(""); }}
-              className="w-full px-3 py-2 text-sm border border-[var(--v2-border)] rounded-lg outline-none focus:border-[var(--v2-brand)] transition"
-            />
-            {completeErr && <div className="text-[12.5px] text-[#b91c1c] mt-1.5">{completeErr}</div>}
-            <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setCompleteTarget(null)} className="px-3.5 py-1.5 text-sm rounded-lg border border-[var(--v2-border)] text-[var(--v2-text2)] hover:bg-[var(--color-gray-50)] transition">取消</button>
-              <button onClick={submitComplete} className="px-3.5 py-1.5 text-sm rounded-lg bg-[var(--v2-brand)] text-white hover:opacity-90 transition">确认完成</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 页头（副本 v3.1：标题 + 副标题 + 说明 chips） */}
       <div className="flex items-end justify-between flex-wrap gap-2.5">

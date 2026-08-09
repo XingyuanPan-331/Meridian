@@ -588,7 +588,7 @@ export default function ProjectsPage() {
   const nodeCount = visibleRows.length;
 
   return (
-    <div className="max-w-[1080px] mx-auto space-y-4">
+    <div className="max-w-[1080px] mx-auto space-y-4 proj-zoom">
       <Toast msg={toastMsg} />
 
       {/* 页头（副本 v3.1：标题 + 副标题 + 说明 chips） */}

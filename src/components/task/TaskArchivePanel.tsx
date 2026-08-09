@@ -55,9 +55,6 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("other");
   const [theme, setTheme] = useState<string | null>(null);
-  // 2026-08-09：主题是否被用户手动改过——未手动改时保存不提交 theme（防止加载失败/推断
-  // 产生的 null 覆盖库中已手动设置的主题，如"直流电机调速"推断不出"竞赛"→ 误清用户设置）
-  const [themeTouched, setThemeTouched] = useState(false);
   // B7：当前主题落库色（自定义主题的颜色不再丢失；预设主题为 null 用 THEMES 派生）
   const [customThemeColor, setCustomThemeColor] = useState<{ color: string; deep: string; bg: string } | null>(null);
   const [themeEdit, setThemeEdit] = useState(false);
@@ -71,10 +68,6 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
   const [timeEdit, setTimeEdit] = useState(false);
   const [timeMin, setTimeMin] = useState("");
   const [timeBusy, setTimeBusy] = useState(false);
-  // 计时模型 V2：完成时间补录/修改（完成状态下可改 → 分配时间段随之重算）
-  const [completeTimeEdit, setCompleteTimeEdit] = useState(false);
-  const [completeTimeVal, setCompleteTimeVal] = useState("");
-  const [completeTimeBusy, setCompleteTimeBusy] = useState(false);
   // P1-10：预估单位（分钟/小时/天）
   const [estUnit, setEstUnit] = useState<EstimateUnit>("min");
 
@@ -129,28 +122,6 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
     finally { setTimeBusy(false); }
   };
 
-  // 计时模型 V2：完成时间补录/修改（完成状态下）——只改 completedAt（分配段派生重算），
-  // 实际投入（TimeLog 聚合）独立不受影响。
-  const saveCompletedAt = async () => {
-    if (!completeTimeVal) return;
-    const d = new Date(completeTimeVal);
-    if (isNaN(d.getTime())) { setSavedTip("完成时间格式不合法"); return; }
-    setCompleteTimeBusy(true);
-    try {
-      const r = await fetch(`/api/tasks/${taskId}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completedAt: d.toISOString() }),
-      });
-      if (!r.ok) throw new Error();
-      setTask((prev) => (prev ? { ...prev, completedAt: d.toISOString() } : prev));
-      setSavedTip("完成时间已更新 ✓ · 分配时间段随之重算");
-      setCompleteTimeEdit(false);
-      setCompleteTimeVal("");
-      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
-    } catch { setSavedTip("保存失败，请重试"); }
-    finally { setCompleteTimeBusy(false); }
-  };
-
   // 移出完成（reopen → 未开始；解决"完成后被困住"）
   const [reopenBusy, setReopenBusy] = useState(false);
   const reopenTask = async () => {
@@ -202,8 +173,7 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
         title: title.trim() || task.title,
         category,
         // V3 阶段 C3：PUT 白名单已支持 theme（null 清除）→ 真实持久化；B7：自定义主题颜色一并落库
-        // 2026-08-09：仅用户手动改过主题才提交（themeTouched）——推断/null 不再覆盖库中手动设置
-        ...(themeTouched ? (theme ? { theme, ...(customThemeColor ? { themeColor: JSON.stringify(customThemeColor) } : { themeColor: null }) } : { theme: null, themeColor: null }) : {}),
+        ...(theme ? { theme, ...(customThemeColor ? { themeColor: JSON.stringify(customThemeColor) } : { themeColor: null }) } : { theme: null, themeColor: null }),
         // FCV2：purpose（≤50 字；空 → null 清除）
         ...(purpose.trim() ? { purpose: purpose.trim().slice(0, 50) } : { purpose: null }),
         // P1-10：预估按单位换算成分钟（estimatedMinutes 内部标准）+ 记录单位
@@ -298,14 +268,14 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                   {THEME_PRESETS.map((t) => {
                     const c = themeColor(t) ?? THEME_FALLBACK;
                     return (
-                      <button key={t} onClick={() => { setTheme(theme === t ? null : t); setThemeTouched(true); setCustomThemeColor(null); }}
+                      <button key={t} onClick={() => { setTheme(theme === t ? null : t); setCustomThemeColor(null); }}
                         className="inline-flex items-center gap-1.5 text-sm px-2 py-1 rounded-md border transition"
                         style={{ background: theme === t ? c.bg : "#fff", color: theme === t ? c.deep : "var(--v2-text2)", borderColor: theme === t ? c.color : "var(--v2-border)" }}>
                         <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />{t}
                       </button>
                     );
                   })}
-                  <button onClick={() => { setTheme(null); setThemeTouched(true); setCustomThemeColor(null); }} className={`text-sm px-2 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
+                  <button onClick={() => { setTheme(null); setCustomThemeColor(null); }} className={`text-sm px-2 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
                 </div>
                 {themeEdit && (
                   <div className="mt-2 border border-[var(--v2-brand-border)] bg-[var(--v2-brand-bg)] rounded-lg p-2.5">
@@ -316,7 +286,7 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                         const name = customName.trim();
                         if (!name) return;
                         // B7：确定即保存（theme + 选色落库，不再两步操作丢颜色）
-                        setTheme(name); setThemeTouched(true);
+                        setTheme(name);
                         setCustomThemeColor({ color: customColor, deep: customColor, bg: "#F8FAFC" });
                         setThemeEdit(false);
                         setCustomName("");
@@ -374,27 +344,6 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                 ) : (
                   <button onClick={() => setTimeEdit(true)} className="text-sm ml-auto text-[var(--v2-brand)] font-medium hover:underline">＋ 补记</button>
                 )}
-              </div>
-              {/* 计时模型 V2：完成时间（补录/修改 · 完成状态下可编辑；分配段 = 完成 − 出发 派生重算） */}
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-[var(--v2-text3)]">完成时间</span>
-                {task?.completedAt ? (
-                  <b className="text-sm text-[var(--v2-text)]">{new Date(task.completedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</b>
-                ) : (
-                  <span className="text-sm text-[var(--v2-text3)]">—</span>
-                )}
-                {task?.status === "completed" && (completeTimeEdit ? (
-                  <div className="flex items-center gap-1.5 ml-auto">
-                    <input type="datetime-local" value={completeTimeVal} onChange={(e) => setCompleteTimeVal(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") saveCompletedAt(); if (e.key === "Escape") { e.stopPropagation(); setCompleteTimeEdit(false); setCompleteTimeVal(""); } }}
-                      className="px-2 py-1 text-sm border border-[var(--v2-border)] rounded outline-none focus:border-[var(--v2-brand)]" autoFocus />
-                    <button onClick={saveCompletedAt} disabled={completeTimeBusy || !completeTimeVal} className="text-sm px-2 py-1 rounded bg-[var(--v2-brand)] text-white disabled:opacity-50">确定</button>
-                    <button onClick={() => { setCompleteTimeEdit(false); setCompleteTimeVal(""); }} className="text-sm px-2 py-1 rounded border border-[var(--v2-border)] text-[var(--v2-text2)]">✕</button>
-                  </div>
-                ) : (
-                  <button onClick={() => { setCompleteTimeEdit(true); setCompleteTimeVal(task?.completedAt ? new Date(task.completedAt).toISOString().slice(0, 16) : ""); }}
-                    className="text-sm ml-auto text-[var(--v2-brand)] font-medium hover:underline">＋ 修改</button>
-                ))}
               </div>
               {/* 删除任务（全站唯一删除入口 · 危险操作确认后执行） */}
               <div className="flex justify-end pt-1">

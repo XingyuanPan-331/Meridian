@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 export type FcV2Phase = "unstarted" | "going" | "confirm" | "done";
 export type FcV2Type = "timer" | "checklist" | "learning" | "accum-daily" | "accum-weekly";
 
-export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number }
+export interface FocusCardV2Item { id: string; text: string; done: boolean; minutes?: number; spanMinutes?: number; completedAt?: string; startedAt?: string }
 export interface FocusCardV2Data {
   id: string;
   type: FcV2Type;
@@ -53,6 +53,13 @@ interface Props {
   onItemToggle?: (itemId: string) => void;
   /** P1-11：清单新增项（今日页 → POST /api/tasks 建子任务；不传则隐藏加号） */
   onItemAdd?: (title: string) => void;
+  /** 2026-08-09：执行清单排序——上移/下移（dir: -1/1）与拖拽换序（fromId → toId） */
+  onItemMove?: (itemId: string, dir: -1 | 1) => void;
+  onItemReorder?: (fromId: string, toId: string) => void;
+  /** 2026-08-09：主卡"完成"在清单有未完成项时=完成当前高亮项（耗时弹窗确认后，min=该项耗时分钟） */
+  onCompleteItem?: (min: number) => void;
+  /** 2026-08-09：清单项独立计时——点「开始」记录该项开始时间（子项 departureAt） */
+  onItemStart?: (itemId: string) => void;
   onCheckin?: (detail?: string) => void;
   onSkip?: () => void;
   onPause?: (reason: string) => void;
@@ -61,6 +68,8 @@ interface Props {
   busy?: boolean;
   /** 演示模式：允许点按钮切换状态（不依赖后端） */
   demo?: boolean;
+  /** 2026-08-09：AI 执行建议（今日页 executionAdvice → 左栏展示；原设计有但未接线） */
+  advice?: { message?: string; reasons?: string[] } | null;
 }
 
 /* ── 类型元数据 ── */
@@ -118,7 +127,7 @@ function MonthCal({ monthDates }: { monthDates?: string[] }) {
 const PAUSE_REASONS = ["太难了", "注意力下降", "临时有事", "估时错误", "其他"];
 
 /* ── 补记时长弹窗 ── */
-function DurationModal({ departureAt, onConfirm, onClose }: { departureAt: string | null; onConfirm: (min: number) => void; onClose: () => void }) {
+function DurationModal({ departureAt, title, onConfirm, onClose }: { departureAt: string | null; title?: string; onConfirm: (min: number) => void; onClose: () => void }) {
   const defaultMin = useMemo(() => {
     if (!departureAt) return 30;
     const diff = Math.round((Date.now() - new Date(departureAt).getTime()) / 60000);
@@ -126,26 +135,38 @@ function DurationModal({ departureAt, onConfirm, onClose }: { departureAt: strin
   }, [departureAt]);
   const [sel, setSel] = useState<number | "custom">(defaultMin <= 60 ? defaultMin : "custom");
   const [custom, setCustom] = useState(String(defaultMin));
+  const [err, setErr] = useState<string | null>(null); // 2026-08-09：输入校验提示
   const depLabel = departureAt ? new Date(departureAt).toTimeString().slice(0, 5) : "--:--";
+  // 2026-08-09（BUG-057-1）：确认前校验——正整数且 ≤1440 分钟（一天）；非法 → 提示并禁止提交
+  const ok = () => {
+    const v = sel === "custom" ? Number(custom) : sel;
+    if (!Number.isInteger(v) || v < 1 || v > 1440) {
+      setErr("请输入 1–1440 之间的整数分钟");
+      return;
+    }
+    setErr(null);
+    onConfirm(v);
+  };
   return (
-    <Modal title="刚才做了多久？" onClose={onClose}>
+    <Modal title={title ?? "刚才做了多久？"} onClose={onClose}>
       <div className="text-sm text-[var(--v2-text2)]">从 <b className="text-[var(--v2-text)]">{depLabel}</b> 出发 · 默认按到现在计算</div>
       <div className="flex gap-2 mt-2.5">
         {[30, 60].map((m) => (
-          <button key={m} onClick={() => setSel(m)}
+          <button key={m} onClick={() => { setSel(m); setErr(null); }}
             className={`flex-1 text-center border-[1.5px] rounded-lg py-2 text-sm font-semibold transition ${sel === m ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text2)]"}`}>
             {m === 30 ? "30 分钟" : "1 小时"}
           </button>
         ))}
-        <button onClick={() => setSel("custom")}
+        <button onClick={() => { setSel("custom"); setErr(null); }}
           className={`flex-1 text-center border-[1.5px] rounded-lg py-2 text-sm font-semibold transition ${sel === "custom" ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)]" : "border-[var(--v2-border)]"}`}>
-          <input value={custom} onChange={(e) => { setCustom(e.target.value); setSel("custom"); }}
+          <input value={custom} onChange={(e) => { setCustom(e.target.value); setSel("custom"); setErr(null); }}
             onClick={(e) => e.stopPropagation()}
             className="w-10 bg-transparent outline-none text-center text-sm font-semibold text-[var(--v2-text)]" placeholder="45" /> 分
         </button>
       </div>
+      {err && <div className="text-[12px] text-[#b91c1c] mt-2">{err}</div>}
       <div className="text-[10px] text-[var(--v2-text3)] mt-2">默认 = 现在 − 出发时刻，可修改</div>
-      <ModalFoot onOk={() => onConfirm(sel === "custom" ? Math.max(1, Number(custom) || 1) : sel)} onCancel={onClose} okText="确定" />
+      <ModalFoot onOk={ok} onCancel={onClose} okText="确定" />
     </Modal>
   );
 }
@@ -208,7 +229,7 @@ function ModalFoot({ onOk, onCancel, okText = "确定" }: { onOk: () => void; on
 }
 
 /* ── 清单（v2-memo 样式：底 #fff9e6 / 左边条 #f5a623 / 标题字 #8b6914 / 勾选框 #d4a853 + 小标题虚线） ── */
-function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; going: boolean }) {
+function MemoList({ card, onItemToggle, onItemAdd, onItemMove, onItemReorder, onItemStart, going }: { card: FocusCardV2Data; onItemToggle?: (id: string) => void; onItemAdd?: (title: string) => void; onItemMove?: (id: string, dir: -1 | 1) => void; onItemReorder?: (fromId: string, toId: string) => void; onItemStart?: (id: string) => void; going: boolean }) {
   const items = card.items ?? [];
   const nextIdx = items.findIndex((it) => !it.done);
   const title = LIST_TITLE[card.type];
@@ -216,12 +237,18 @@ function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2D
   const [adding, setAdding] = useState(false);
   const [addTitle, setAddTitle] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
+  // 2026-08-09：拖拽排序（HTML5 DnD，同级内重排）
+  const [dragId, setDragId] = useState<string | null>(null);
   const submitAdd = () => {
     const v = addTitle.trim();
     if (!v) return;
     onItemAdd?.(v);
     setAddTitle("");
     setAdding(false);
+  };
+  const sortable = !!onItemMove || !!onItemReorder;
+  const onDropTo = (targetId: string) => {
+    if (dragId && dragId !== targetId) { onItemReorder?.(dragId, targetId); setDragId(null); }
   };
   return (
     <div className="rounded-lg mt-1.5" style={{ background: "#fff9e6", borderLeft: "3px solid #f5a623", padding: "7px 6px" }}>
@@ -267,7 +294,15 @@ function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2D
           {items.map((it, i) => {
             const isNext = i === nextIdx;
             return (
-              <li key={it.id} className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm" style={{ background: "rgba(255,255,255,0.55)", ...(isNext && going ? { background: "var(--v2-brand-bg)", borderLeft: "4px solid var(--v2-brand)", fontWeight: 600, color: "var(--v2-text)" } : {}), ...(it.done ? { color: "var(--v2-text3)", opacity: 0.65 } : {}) }}>
+              <li
+                key={it.id}
+                draggable={sortable && !it.done}
+                onDragStart={(e) => { if (sortable && !it.done) { setDragId(it.id); e.dataTransfer.effectAllowed = "move"; } }}
+                onDragOver={(e) => { if (dragId && dragId !== it.id && !it.done) e.preventDefault(); }}
+                onDrop={() => onDropTo(it.id)}
+                onDragEnd={() => setDragId(null)}
+                className={`group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm ${dragId === it.id ? "opacity-50" : ""}`}
+                style={{ background: "rgba(255,255,255,0.55)", ...(isNext && going ? { background: "var(--v2-brand-bg)", borderLeft: "4px solid var(--v2-brand)", fontWeight: 600, color: "var(--v2-text)" } : {}), ...(it.done ? { color: "var(--v2-text3)", opacity: 0.65 } : {}) }}>
                 <button
                   onClick={() => onItemToggle?.(it.id)}
                   disabled={!onItemToggle}
@@ -276,7 +311,33 @@ function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2D
                   {it.done && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
                 </button>
                 <span className={it.done ? "line-through" : ""} style={{ color: it.done ? "var(--v2-text3)" : undefined }}>{it.text}</span>
-                {it.minutes != null && <span className="ml-auto text-[10px] tabular-nums text-[var(--v2-text3)]">{it.minutes}分</span>}
+                {/* 2026-08-09（BUG-057-4）：清单项实际投入（TimeLog 聚合）——完成时间置最右侧 */}
+                {it.done && it.minutes != null && (
+                  <span className="text-[10px] tabular-nums text-[var(--v2-text3)] ml-auto shrink-0"
+                    title={`开始于 ${it.startedAt ? new Date(it.startedAt).toTimeString().slice(0, 5) : "—"} · 完成于 ${it.completedAt ? new Date(it.completedAt).toTimeString().slice(0, 5) : "—"} · 实际投入 ${it.minutes} 分${it.spanMinutes != null ? ` · 分配 ${it.spanMinutes} 分` : ""}`}>
+                    投入 {it.minutes}分
+                  </span>
+                )}
+                {/* 2026-08-09（BUG-057-4）：未开始项显示「开始」按钮（独立计时）；进行中项显示开始时刻 */}
+                {!it.done && onItemStart && !it.startedAt && (
+                  <button
+                    title="开始该项（记录该项起始时间，独立计时）" aria-label="开始"
+                    onClick={(e) => { e.stopPropagation(); onItemStart(it.id); }}
+                    className="text-[10px] px-1.5 py-px rounded-md font-medium shrink-0 transition"
+                    style={{ color: "#15803d", background: "rgba(22,163,74,0.1)" }}
+                  >开始</button>
+                )}
+                {!it.done && it.startedAt && (
+                  <span className="text-[10px] tabular-nums text-[var(--v2-text3)]" title={`该项开始于 ${new Date(it.startedAt).toTimeString().slice(0, 5)}`}>
+                    开始于 {new Date(it.startedAt).toTimeString().slice(0, 5)}
+                  </span>
+                )}
+                {/* 2026-08-09 清单交互简化：整行直接拖拽排序（无↑↓按钮）；完成时间已置右 */}
+                {sortable && !it.done && (
+                  <span className="ml-auto flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition" title="按住整行拖动即可排序">
+                    <span style={{ color: "#d4a853", cursor: "grab" }} className="text-[13px] select-none">⠿</span>
+                  </span>
+                )}
               </li>
             );
           })}
@@ -287,7 +348,7 @@ function MemoList({ card, onItemToggle, onItemAdd, going }: { card: FocusCardV2D
 }
 
 /* ── 主组件 ── */
-export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo }: Props) {
+export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemStart, onItemToggle, onItemAdd, onItemMove, onItemReorder, onCheckin, onSkip, onPause, onContinueTomorrow, busy, demo, advice }: Props) {
   // 内部状态机：demo 模式或真实卡（出发/暂停为本地模拟）
   // 收尾批次 B：忘记确认提示条（session 级关闭，不持久化）
   const [reminderDismissed, setReminderDismissed] = useState(false);
@@ -318,13 +379,28 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
     // FCV2 对接：真实卡 → action start（后端写 Task.departureAt）；演示区内部模拟
     if (onStart) { onStart(); return; }
   };
+  // 2026-08-09：执行清单还有未完成项时，"完成"= 完成当前高亮清单项（用户预期：
+  // 完成清单里的项，不是整个任务）；全部勾完（或无子项）才走"完成整个任务"
+  const pendingItems = card.items?.filter((i) => !i.done) ?? [];
+  const hasPendingItem = card.type === "checklist" && pendingItems.length > 0;
+  // 2026-08-09：清单全部勾完 → going 阶段主按钮变为「完成」（弹耗时确认），不再停留"进行中…"
+  const allItemsDone = card.type === "checklist" && (card.items?.length ?? 0) > 0 && !hasPendingItem;
+  // 2026-08-09（BUG-057-3）：「该项完成」同样先弹耗时弹窗（用户填该项耗时 → 确认 → 该项完成），
+  // 不直接勾选；mode 区分弹窗语义（item=完成清单项 / task=完成整个任务）
+  const [durMode, setDurMode] = useState<"item" | "task">("task");
   const finishFlow = () => {
+    if (hasPendingItem && onCompleteItem) { setDurMode("item"); setDurModal(true); return; }
     // 回来确认：非积累型弹补记时长；积累型弹打卡输入
     if (isAccum) { setCheckinModal(true); return; }
-    setDurModal(true);
+    setDurMode("task"); setDurModal(true);
   };
   const confirmDuration = (min: number) => {
     setDurModal(false);
+    if (durMode === "item" && onCompleteItem) {
+      // 完成当前清单项（耗时 min）：completedAt 由后端/前端按 出发+min 推算，保证展示耗时一致
+      onCompleteItem(min);
+      return;
+    }
     setDoneFlash(true);
     setPhase("done");
     // FCV2 对接：真实卡 → action complete + durationMinutes（补记时长）
@@ -364,9 +440,9 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
   const mainBtn = done
     ? { text: "已完成 ✓", cls: "bg-[#d1d5db] text-[#6b7280] cursor-default" }
     : phase === "confirm"
-      ? { text: isAccum ? "打卡" : "完成", cls: "bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]", action: finishFlow }
+      ? { text: hasPendingItem ? "完成当前项" : isAccum ? "打卡" : "完成", cls: "bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]", action: finishFlow }
       : going
-        ? { text: "进行中…", cls: "bg-[var(--v2-brand)] text-white opacity-85" }
+        ? { text: allItemsDone ? "完成" : "进行中…", cls: "bg-[var(--v2-brand)] text-white", action: allItemsDone ? finishFlow : undefined }
         : { text: isTimer ? "完成" : "出发", cls: `bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)]`, action: isTimer ? finishFlow : go };
 
   const stateTag = done
@@ -400,16 +476,29 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
           {/* ═══ 左栏 · 数据区（副本 col2-left 灰底）：归属 + 项目阶段 + 时段/预计 + AI ═══ */}
           <div className="fcv2-left px-4 py-3 space-y-2.5 min-w-0">
             <div>
-              <div className="text-[9px] tracking-[0.4px] text-[var(--v2-text3)] mb-0.5">所属项目</div>
+              <div className="text-[11px] tracking-[0.4px] text-[var(--v2-text3)] mb-1">所属项目</div>
               <div className="text-[15px] font-semibold text-[var(--v2-text)]">{card.parent}</div>
             </div>
+
+            {/* 2026-08-09：AI 执行建议（左栏 · 设计稿预留位；后端 executionAdvice 接线） */}
+            {advice?.message && (
+              <div className="rounded-lg px-2.5 py-2 text-[12px] leading-[1.6]" style={{ background: "var(--v2-purple-bg)", color: "#7c3aed", border: "1px solid #ede9fe" }}>
+                <div className="text-[10.5px] font-semibold tracking-[0.3px] mb-0.5 opacity-80">AI 建议</div>
+                <div>{advice.message}</div>
+                {advice.reasons && advice.reasons.length > 0 && (
+                  <ul className="mt-1 space-y-0.5 opacity-85">
+                    {advice.reasons.map((r, i) => <li key={i} className="flex gap-1"><span className="shrink-0">·</span><span>{r}</span></li>)}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {/* 项目阶段（副本 c2-proj-progress + c2-stage-list） */}
             {isList && card.stages && card.stages.length > 0 && (
               <div>
                 {card.projectProgress && (
                   <div className="mb-1.5">
-                    <div className="flex justify-between text-[9.5px] text-[var(--v2-text3)] mb-0.5">
+                    <div className="flex justify-between text-[11.5px] text-[var(--v2-text3)] mb-1">
                       <span>项目进度</span><b className="text-[var(--v2-text2)]">{card.projectProgress.done}/{card.projectProgress.total} 阶段</b>
                     </div>
                     <div className="h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
@@ -417,11 +506,11 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
                     </div>
                   </div>
                 )}
-                <div className="text-[9px] tracking-[0.4px] text-[var(--v2-text3)] mb-1">项目阶段</div>
+                <div className="text-[11px] tracking-[0.4px] text-[var(--v2-text3)] mb-1">项目阶段</div>
                 <ul className="space-y-px">
                   {card.stages.map((s) => (
-                    <li key={s.name} className={`flex items-center gap-1.5 text-[10.5px] px-1.5 py-1 rounded-md ${
-                      s.current ? "bg-[var(--v2-brand-bg)] border-l-[3px] border-[var(--v2-brand)] font-semibold text-[var(--v2-text)] text-[11.5px]" :
+                    <li key={s.name} className={`flex items-center gap-1.5 text-[12px] px-1.5 py-1 rounded-md ${
+                      s.current ? "bg-[var(--v2-brand-bg)] border-l-[3px] border-[var(--v2-brand)] font-semibold text-[var(--v2-text)] text-[12.5px]" :
                       s.done ? "line-through text-[var(--v2-text3)]" : "text-[var(--v2-text2)]"
                     }`}>
                       {s.done && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12" /></svg>}
@@ -434,13 +523,13 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
               </div>
             )}
             {isList && (!card.stages || card.stages.length === 0) && (
-              <div className="text-[10px] text-[var(--v2-text3)]">项目阶段 · 未挂载项目树</div>
+              <div className="text-[11.5px] text-[var(--v2-text3)]">项目阶段 · 未挂载项目树</div>
             )}
 
             <div className="h-px bg-[#f0f0f0]" />
 
             {/* 元信息（副本 c2-meta-line） */}
-            <div className="text-[10.5px] text-[var(--v2-text3)] space-y-0.5">
+            <div className="text-[12px] text-[var(--v2-text3)] space-y-0.5">
               {isTimer && card.scheduledStart && (
                 <div><b className="text-[var(--v2-text2)]">时段</b> {new Date(card.scheduledStart).toTimeString().slice(0, 5)} - {card.scheduledEnd ? new Date(card.scheduledEnd).toTimeString().slice(0, 5) : "--"}</div>
               )}
@@ -454,15 +543,15 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
               <div className="grid grid-cols-3 gap-2">
                 <div className="text-center rounded-lg py-2 bg-[#fffbeb] border border-[#fde68a]">
                   <div className="text-lg font-semibold tabular-nums text-[#b45309]">{card.streak?.current ?? 0} 天</div>
-                  <div className="text-[10px] text-[var(--v2-text3)] mt-0.5">{card.type === "accum-daily" ? "连续天数" : "本周完成"}</div>
+                  <div className="text-[11.5px] text-[var(--v2-text3)] mt-0.5">{card.type === "accum-daily" ? "连续天数" : "本周完成"}</div>
                 </div>
                 <div className="text-center rounded-lg py-2 bg-[#eff6ff] border border-[#bfdbfe]">
                   <div className="text-lg font-semibold tabular-nums text-[#2563eb]">{card.streak?.longest ?? 0} 天</div>
-                  <div className="text-[10px] text-[var(--v2-text3)] mt-0.5">最长记录</div>
+                  <div className="text-[11.5px] text-[var(--v2-text3)] mt-0.5">最长记录</div>
                 </div>
                 <div className="text-center rounded-lg py-2 bg-[#f0fdf4] border border-[#bbf7d0]">
                   <div className="text-lg font-semibold tabular-nums text-[#16a34a]">{card.type === "accum-daily" ? `${card.weekCount ?? 0}/7` : `${card.weekCount ?? 0}/${card.weekTarget ?? 1}`}</div>
-                  <div className="text-[10px] text-[var(--v2-text3)] mt-0.5">{card.type === "accum-daily" ? "本周打卡" : "本周目标"}</div>
+                  <div className="text-[11.5px] text-[var(--v2-text3)] mt-0.5">{card.type === "accum-daily" ? "本周打卡" : "本周目标"}</div>
                 </div>
               </div>
             )}
@@ -547,14 +636,14 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
                   <div className="h-full rounded-full" style={{ width: `${(doneCount / totalCount) * 100}%`, background: color }} />
                 </div>
                 {/* 执行清单（v2-memo）——始终在右栏执行区 */}
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} onItemStart={onItemStart} going={going} />
               </div>
             )}
 
             {card.type === "accum-weekly" && (
               <div className="mt-2">
                 <div className="flex items-center text-[10.5px] text-[var(--v2-text3)] mb-1">今日练 <b className="text-[var(--v2-text2)] ml-1">{(card.items ?? []).length} 个动作</b></div>
-                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} going={going} />
+                <MemoList card={card} onItemToggle={onItemToggle} onItemAdd={onItemAdd} onItemMove={onItemMove} onItemReorder={onItemReorder} onItemStart={onItemStart} going={going} />
               </div>
             )}
 
@@ -600,7 +689,9 @@ export function FocusCardV2({ card, onStart, onComplete, onItemToggle, onItemAdd
       </div>
 
       {/* 弹窗 */}
-      {durModal && <DurationModal departureAt={departureAt} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
+      {/* 2026-08-09（计时器重置 Bug）：item 模式默认值用「该项自己的开始时间」，不再兜底父任务出发——
+          未开始项（无 startedAt）用初始默认（30 分钟），避免沿用父任务出发 3 小时前的 180 分钟 */}
+      {durModal && <DurationModal departureAt={durMode === "item" ? (pendingItems[0]?.startedAt ?? null) : departureAt} title={durMode === "item" ? "这一项实际投入了多久？" : "这次实际投入了多久？"} onConfirm={confirmDuration} onClose={() => setDurModal(false)} />}
       {pauseModal && <PauseModal onConfirm={pauseConfirm} onClose={() => setPauseModal(false)} />}
       {checkinModal && <CheckinModal card={card} onConfirm={confirmCheckin} onClose={() => setCheckinModal(false)} />}
     </div>

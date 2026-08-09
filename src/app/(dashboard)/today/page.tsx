@@ -933,6 +933,7 @@ export default function TodayPage() {
             onItemStart={(itemId) => startChildItem(itemId)}
             onContinueTomorrow={() => continueTomorrow(cur.card.id)}
             busy={busy}
+            advice={data?.executionAdvice ?? null}
           />
           {cardList.length > 1 && (
             <div className="flex justify-center gap-1.5 mt-3">

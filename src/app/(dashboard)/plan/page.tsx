@@ -419,9 +419,15 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                       title={`${t.title}\n${tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
                       {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
                       {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
-                      {/* 标题行：右侧预留 AI 徽章 / 中矮块的时长角标位，截断不撞角标 */}
+                      {/* 标题：2026-08-10 多行换行（原单行 nowrap 截断——高卡片大量空白却只显示一行）；
+                          按卡高自适应：高卡最多 3 行、矮卡 2 行，充分利用卡片空间显示完整名字 */}
                       <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: t.source === "ai" ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
-                        <div className="plan-tsk-title text-[15px] truncate" style={{ fontWeight: 600, lineHeight: 1.35, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                        <div className="plan-tsk-title text-[15px]" style={{
+                          fontWeight: 600, lineHeight: 1.35, color: "#111827",
+                          display: "-webkit-box", WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: hh >= 60 ? 3 : 2,
+                          overflow: "hidden", wordBreak: "break-word",
+                        }}>{t.title}</div>
                         {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                       </div>
                       {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}

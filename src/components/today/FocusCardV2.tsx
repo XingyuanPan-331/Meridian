@@ -488,7 +488,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemS
                     <div className="flex justify-between text-[11.5px] text-[var(--v2-text3)] mb-1">
                       <span>项目进度</span><b className="text-[var(--v2-text2)]">{card.projectProgress.done}/{card.projectProgress.total} 阶段</b>
                     </div>
-                    <div className="h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
+                    <div className="h-2 rounded-full bg-[#f1f5f9] overflow-hidden">
                       <div className="h-full rounded-full bg-[var(--v2-brand)]" style={{ width: `${Math.round((card.projectProgress.done / card.projectProgress.total) * 100)}%` }} />
                     </div>
                   </div>
@@ -632,7 +632,7 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemS
                   {card.type === "checklist" ? "执行清单" : "知识点"} <b className="text-[var(--v2-text2)] ml-1.5">{doneCount}/{totalCount} {card.type === "checklist" ? "已完成" : "已学"}</b>
                   <span className="ml-auto">总耗时 {elapsedLabel}</span>
                 </div>
-                <div className="h-[5px] rounded-full bg-[#f1f5f9] overflow-hidden mt-1">
+                <div className="h-2 rounded-full bg-[#f1f5f9] overflow-hidden mt-1">
                   <div className="h-full rounded-full" style={{ width: `${(doneCount / totalCount) * 100}%`, background: color }} />
                 </div>
                 {/* 执行清单（v2-memo）——始终在右栏执行区 */}

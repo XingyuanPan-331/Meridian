@@ -5,6 +5,7 @@ import type { InboxDraftItem, BreakdownPhase } from "@/types/inbox";
 import { DOMAINS, resolveTheme } from "@/lib/plan/colors";
 import { ThemeBadge } from "@/components/task/ThemeBadge";
 import { parseThemeColor } from "@/lib/task/theme";
+import { useArchive } from "@/components/task/ArchiveProvider";
 import { ESTIMATE_UNITS, ESTIMATE_UNIT_LABEL, formatEstimate, toMinutes, type EstimateUnit } from "@/lib/task/estimate";
 
 /* ═══════════════════════════════════════════
@@ -109,6 +110,40 @@ function InputCanvas({ greeting, onSubmit, loading }: {
             {loading ? "AI 整理中…" : "AI 整理"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── 2026-08-10：今日创建的任务（输入框下方展示 · 点击打开档案面板修改） ── */
+function TodayCreatedTasks({ onOpen }: { onOpen: (taskId: string) => void }) {
+  const [tasks, setTasks] = useState<{ id: string; title: string; status: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/tasks")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: { id: string; title: string; status: string; createdAt: string }[]) => {
+        const today = new Date();
+        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+        const mine = (list || []).filter((t) => {
+          const c = t.createdAt ? new Date(t.createdAt).getTime() : 0;
+          return c >= start;
+        }).slice(0, 12);
+        setTasks(mine);
+      })
+      .catch(() => {});
+  }, []);
+  if (tasks.length === 0) return null;
+  return (
+    <div className="mb-4">
+      <div className="text-sm text-[var(--v2-text3)] mb-1.5">今日创建（{tasks.length}）· 点击可修改</div>
+      <div className="flex flex-wrap gap-1.5">
+        {tasks.map((t) => (
+          <button key={t.id} onClick={() => onOpen(t.id)}
+            className="inline-flex items-center gap-1.5 text-sm px-2 py-1 rounded-md border border-[var(--v2-border)] bg-white hover:border-[var(--v2-brand)] hover:bg-[var(--v2-brand-bg)] transition max-w-[260px]">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${t.status === "completed" ? "bg-[#16a34a]" : "bg-[#d4a853]"}`} />
+            <span className="truncate">{t.title}</span>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -480,6 +515,7 @@ function loadDraft(): { draftId: string; understanding: string; items: InboxDraf
 }
 
 export default function InboxPage() {
+  const { open: archiveOpen } = useArchive();
   const draftInitial = loadDraft(); // 挂载即恢复，与持久化 effect 无竞争
   const [result, setResult] = useState<{ draftId: string; understanding: string; items: InboxDraftItem[] } | null>(draftInitial);
   const [loading, setLoading] = useState(false);
@@ -576,6 +612,9 @@ export default function InboxPage() {
       <p className="text-xs text-[var(--v2-text3)]/70 mb-4">把脑子里的事倒进来，AI 帮你理解、归类、排期</p>
 
       <InputCanvas greeting={`${new Date().getHours() < 12 ? "早上好" : new Date().getHours() < 18 ? "下午好" : "晚上好"}。你现在脑子里有什么？`} onSubmit={analyze} loading={loading} />
+
+      {/* 2026-08-10：今日创建的任务（方便回头修改） */}
+      <TodayCreatedTasks onOpen={(id) => archiveOpen(id)} />
 
       {error && <div className="text-sm text-[var(--color-danger-text)] bg-[var(--color-danger-bg)] border border-[var(--color-danger-border)] rounded-lg px-3 py-2 mb-3">{error}</div>}
 

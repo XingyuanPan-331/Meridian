@@ -351,13 +351,18 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
                     );
                   })}
                   <button onClick={() => { setTheme(null); setThemeTouched(true); setCustomThemeColor(null); }} className={`text-sm px-2 py-1 rounded-md border transition ${theme === null ? "border-[var(--v2-brand)] bg-[var(--v2-brand-bg)] text-[var(--v2-brand-deep)]" : "border-[var(--v2-border)] text-[var(--v2-text3)]"}`}>无主题</button>
-                  {/* 2026-08-09 主题管理：已用自定义主题（可选用/改名/改色/删除） */}
+                  {/* 2026-08-09 主题管理：已用自定义主题（可选用/改名/改色/删除）——hover 直接删除 */}
                   {usedThemes.map((ut) => (
-                    <button key={ut.name} onClick={() => { setTheme(theme === ut.name ? null : ut.name); setThemeTouched(true); setCustomThemeColor({ color: ut.color, deep: ut.deep, bg: ut.bg }); }}
-                      className="inline-flex items-center gap-1.5 text-sm px-2 py-1 rounded-md border transition"
+                    <span key={ut.name} className="inline-flex items-center gap-1 text-sm rounded-md border transition group/ut"
                       style={{ background: theme === ut.name ? ut.bg : "#fff", color: theme === ut.name ? ut.deep : "var(--v2-text2)", borderColor: theme === ut.name ? ut.color : "var(--v2-border)" }}>
-                      <span className="w-2 h-2 rounded-full" style={{ background: ut.color }} />{ut.name}<span className="text-[10px] opacity-60">{ut.count}</span>
-                    </button>
+                      <button onClick={() => { setTheme(theme === ut.name ? null : ut.name); setThemeTouched(true); setCustomThemeColor({ color: ut.color, deep: ut.deep, bg: ut.bg }); }}
+                        className="inline-flex items-center gap-1.5 pl-2 pr-0.5 py-1">
+                        <span className="w-2 h-2 rounded-full" style={{ background: ut.color }} />{ut.name}<span className="text-[10px] opacity-60">{ut.count}</span>
+                      </button>
+                      <button title={`删除主题「${ut.name}」`} aria-label="删除主题"
+                        onClick={(e) => { e.stopPropagation(); deleteTheme(ut.name); }}
+                        className="pr-1.5 pl-0.5 text-[13px] text-[var(--v2-text3)] opacity-0 group-hover/ut:opacity-100 hover:text-[var(--color-danger-text)] transition shrink-0">✕</button>
+                    </span>
                   ))}
                 </div>
                 {themeEdit && (

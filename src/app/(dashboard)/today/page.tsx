@@ -178,7 +178,7 @@ function matchChain(trees: ProjTreeNode[], names: string[]): ProjTreeNode[] {
   }
   return chain;
 }
-function buildAncestry(t: CurrentTask, trees: ProjTreeNode[]): { stages: { name: string; done?: boolean; current?: boolean }[] | undefined; projectProgress: { done: number; total: number } | undefined } {  const names = (t.parentTitle || "").split(" / ").map((s) => s.trim()).filter(Boolean);
+function buildAncestry(t: CurrentTask, trees: ProjTreeNode[]): { stages: { id?: string; name: string; done?: boolean; current?: boolean }[] | undefined; projectProgress: { done: number; total: number } | undefined } {  const names = (t.parentTitle || "").split(" / ").map((s) => s.trim()).filter(Boolean);
   if (!names.length) return { stages: undefined, projectProgress: undefined };
   const chain = matchChain(trees, names);
   if (!chain.length) return { stages: undefined, projectProgress: undefined };
@@ -193,6 +193,7 @@ function buildAncestry(t: CurrentTask, trees: ProjTreeNode[]): { stages: { name:
   walkStar(projectRoot);
   const sorted = starList.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.title.localeCompare(b.title, "zh"));
   const stages = sorted.map((n) => ({
+    id: n.id, // 2026-08-10：阶段可点击切换（左栏直接点开其他任务）
     name: n.title,
     done: n.status === "completed",
     current: n.id === t.id || n.id === t.parentId,
@@ -770,21 +771,23 @@ export default function TodayPage() {
     // 两张同 id 卡导致 React key 冲突（"Encountered two children with the same key"）。
     const seen = new Set<string>();
     const curId = data.currentTask?.id ?? null;
-    // 路线选中（非当前任务）→ 前置该任务的基础卡（含提前执行语义）
+    // 路线选中（非当前任务）→ 前置该任务的基础卡（含提前执行语义）。
+    // 2026-08-10：stages 点击的任务可能今天未排期（timeline 无）——只要任务数据已加载也渲染
     if (routeSel && routeSel !== curId) {
       const tl = data.todayTimeline.find((t) => t.taskId === routeSel);
-      if (tl) {
+      const rt = routeSelTask && routeSelTask.id === routeSel ? routeSelTask : null;
+      if (tl || rt) {
         // BUG-20260807-044：优先用点击时 fetch 的真实任务数据构造（children/类型正确）；
         // fetch 未返回前用时间线字段兜底（items 空，随后 routeSelTask 就绪自动补全）
-        const rt = routeSelTask && routeSelTask.id === routeSel ? routeSelTask : null;
-        const base = rt ?? ({
+        const base = rt ?? (tl ? ({
           id: tl.taskId, title: tl.title, description: null, taskType: null, category: null,
           parentTitle: null, children: [], scheduledStart: tl.start, scheduledEnd: tl.end,
           elapsedMinutes: 0, remainingMinutes: 0, plannedMinutes: 0, completionPercent: 0,
           purpose: null, departureAt: null, accumulate: false,
           // 2026-08-09：timeline 携带任务状态（completed 任务点击后卡显示"已完成"，而非"待开始/进行中"）
           status: tl.status ?? "not_started",
-        } as CurrentTask);
+        } as CurrentTask) : null);
+        if (!base) return list;
         // BUG-20260807-045：GET /api/tasks/:id 的 children 字段是 title，toCardV2 期待 text →
         // 归一化（title → text），否则清单项文本为空（li 无字，勾选/显示均失效）。
         const normBase = {
@@ -795,16 +798,16 @@ export default function TodayPage() {
         } as CurrentTask;
         const v2 = toCardV2(normBase, treeCache);
         const tagLabel = v2.type === "learning" ? "学习型" : v2.type === "timer" ? "时间型" : v2.type === "accum-daily" || v2.type === "accum-weekly" ? "积累型" : "清单型";
-        if (!seen.has(tl.taskId)) {
-          seen.add(tl.taskId);
+        if (!seen.has(routeSel)) {
+          seen.add(routeSel);
           list.push({
             card: {
-              id: tl.taskId, parent: "今日路线", title: tl.title,
+              id: routeSel, parent: rt?.parentTitle ?? "今日路线", title: v2.title,
               type: v2.type === "accum-daily" || v2.type === "accum-weekly" ? "accumulate" : v2.type,
               plannedMinutes: 0, doneCount: v2.items?.filter((i) => i.done).length ?? 0, totalCount: v2.items?.length || 1,
               progress: v2.progress, elapsedMinutes: 0, items: v2.items ?? [], aiExec: "",
             },
-            tagLabel, statText: "待开始", hint: "提前执行 · 点「出发」开始计时",
+            tagLabel, statText: "待开始", hint: tl ? "提前执行 · 点「出发」开始计时" : "项目内切换 · 清单可直接操作",
             cardV2: v2,
           });
         }
@@ -935,6 +938,8 @@ export default function TodayPage() {
             // 2026-08-09：清单项独立计时——点「开始」记录该项开始时间
             onItemStart={(itemId) => startChildItem(itemId)}
             onContinueTomorrow={() => continueTomorrow(cur.card.id)}
+            // 2026-08-10：左栏项目阶段点击切换任务（今日未排期也可打开操作清单）
+            onStageSelect={(tid) => { setRouteSel(tid); setCardIdx(0); setRouteSelTask(null); fetch(`/api/tasks/${tid}`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && d.id) setRouteSelTask(d as CurrentTask); }).catch(() => {}); }}
             busy={busy}
             advice={data?.executionAdvice ?? null}
           />

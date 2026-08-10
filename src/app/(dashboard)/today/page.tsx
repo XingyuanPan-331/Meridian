@@ -664,7 +664,7 @@ export default function TodayPage() {
         body: JSON.stringify({ action: "complete", durationMinutes: Math.max(1, Math.round(min)) }),
       });
       if (!r.ok) throw new Error("操作失败");
-      okToast("已勾选该项 · 下一项自动开始计时");
+      okToast("已勾选该项 ✓ 下一项需手动点「开始」计时");
       window.dispatchEvent(new CustomEvent("meridian-task-changed"));
       await load();
     } catch { failToast("操作失败，请重试"); }

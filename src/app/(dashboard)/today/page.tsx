@@ -33,6 +33,8 @@ interface CurrentTask {
   } | null;
   children: { id: string; text: string; done: boolean }[];
   scheduledStart: string | null; scheduledEnd: string | null;
+  // 2026-08-10：预估（分钟，前置卡"预计"显示；GET tasks/:id 返回 estimatedMinutes）
+  estimatedMinutes?: number | null;
   elapsedMinutes: number; remainingMinutes: number; plannedMinutes: number; completionPercent: number;
 }
 interface MustDoTask {
@@ -234,7 +236,8 @@ function toCardV2(t: CurrentTask, trees: ProjTreeNode[] = []): FocusCardV2Data {
     phase,
     scheduledStart: t.scheduledStart,
     scheduledEnd: t.scheduledEnd,
-    plannedMinutes: t.plannedMinutes || 0,
+    // 2026-08-10：预计兜底 estimatedMinutes（GET tasks/:id 返回预估，无 plannedMinutes 时用）
+    plannedMinutes: t.plannedMinutes ?? t.estimatedMinutes ?? 0,
     elapsedMinutes: t.elapsedMinutes || 0,
     remainingMinutes: t.remainingMinutes || 0,
     progress: t.completionPercent ?? 0,
@@ -782,6 +785,8 @@ export default function TodayPage() {
         const base = rt ?? (tl ? ({
           id: tl.taskId, title: tl.title, description: null, taskType: null, category: null,
           parentTitle: null, children: [], scheduledStart: tl.start, scheduledEnd: tl.end,
+          // 2026-08-10 用时修正：rt 就绪后 base=rt 带真实预估/投入（见下方 ?? 优先）；
+          // tl 兜底分支（rt 未回）预估/投入暂 0，routeSelTask 就绪后自动补全
           elapsedMinutes: 0, remainingMinutes: 0, plannedMinutes: 0, completionPercent: 0,
           purpose: null, departureAt: null, accumulate: false,
           // 2026-08-09：timeline 携带任务状态（completed 任务点击后卡显示"已完成"，而非"待开始/进行中"）
@@ -804,8 +809,9 @@ export default function TodayPage() {
             card: {
               id: routeSel, parent: rt?.parentTitle ?? "今日路线", title: v2.title,
               type: v2.type === "accum-daily" || v2.type === "accum-weekly" ? "accumulate" : v2.type,
-              plannedMinutes: 0, doneCount: v2.items?.filter((i) => i.done).length ?? 0, totalCount: v2.items?.length || 1,
-              progress: v2.progress, elapsedMinutes: 0, items: v2.items ?? [], aiExec: "",
+              // 2026-08-10 用时修正：预计=预估、已用=实际投入（不再 0 → "待排期/—"）
+              plannedMinutes: rt?.estimatedMinutes ?? 0, doneCount: v2.items?.filter((i) => i.done).length ?? 0, totalCount: v2.items?.length || 1,
+              progress: v2.progress, elapsedMinutes: rt?.elapsedMinutes ?? 0, items: v2.items ?? [], aiExec: "",
             },
             tagLabel, statText: "待开始", hint: tl ? "提前执行 · 点「出发」开始计时" : "项目内切换 · 清单可直接操作",
             cardV2: v2,

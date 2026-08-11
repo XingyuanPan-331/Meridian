@@ -520,12 +520,7 @@ export default function ProjectsPage() {
 
   /* ── 待整理池 AI 建议（后端 suggestion 字段优先，未就绪前端推断） ── */
   const suggestionOf = useCallback((o: TreeNode): { projId: string | null; label: string } | null => {
-    // 2026-08-11 修复：后端 suggestion 是对象 { targetId, targetTitle, reason }——此前直接当字符串渲染
-    // → React 报 "Objects are not valid as a React child"（打开 project 页即崩）。转成可显示文本。
-    if (o.suggestion) {
-      const s = o.suggestion as unknown as { targetTitle?: string; reason?: string };
-      return { projId: null, label: s.targetTitle ? `AI 建议 → 挂入 ${s.targetTitle}` : (s.reason || "AI 建议") };
-    }
+    if (o.suggestion) return { projId: null, label: o.suggestion };
     const th = resolveTheme(null, o.title, o.category);
     const proj = th ? trees.find((t) => t.level === "project" && resolveTheme(null, t.title, t.category) === th) : null;
     if (proj) return { projId: proj.id, label: `AI 建议 → 挂入 ${proj.title}` };
@@ -593,7 +588,7 @@ export default function ProjectsPage() {
   const nodeCount = visibleRows.length;
 
   return (
-    <div className="max-w-[1080px] mx-auto space-y-4 proj-zoom">
+    <div className="max-w-[1080px] mx-auto space-y-4">
       <Toast msg={toastMsg} />
 
       {/* 页头（副本 v3.1：标题 + 副标题 + 说明 chips） */}

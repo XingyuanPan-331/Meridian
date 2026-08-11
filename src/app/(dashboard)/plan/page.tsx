@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { DOMAINS, normalizeCategory, resolveTheme, THEMES } from "@/lib/plan/colors";
 import { ThemeBadge } from "@/components/task/ThemeBadge";
 import { realTimeToVisualTime } from "@/lib/plan/time";
@@ -20,12 +20,14 @@ const DAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周�
 const H = 68;   // 每小时行高（放大：64 → 68，配合字号提升）
 const S = 8;    // 起始小时
 const TH = 14;  // 默认显示小时数（8:00 - 22:00）
-/* 时段分区（设计稿）：上午白 / 下午米黄 / 晚上浅紫 / 凌晨灰 · nm 竖排标签 */
+/* 时段分区（设计稿）：上午白 / 下午米黄 / 晚上浅紫 / 深夜灰 / 凌晨深灰 · nm 竖排标签
+   2026-08-11：原"凌晨"分组（22-2）改名"深夜"；新增"凌晨"分组（2-8 = 视觉 26-32） */
 const PS = [
   { s: 8, e: 13, bg: "#ffffff", tx: "var(--color-gray-500)", nm: ["上", "午"] },
   { s: 13, e: 18, bg: "#fef9e7", tx: "#b45309", nm: ["下", "午"] },
   { s: 18, e: 22, bg: "var(--v2-purple-bg)", tx: "var(--v2-purple)", nm: ["晚", "上"] },
-  { s: 22, e: 26, bg: "var(--color-gray-100)", tx: "var(--color-gray-500)", nm: ["凌", "晨"] },
+  { s: 22, e: 26, bg: "var(--color-gray-100)", tx: "var(--color-gray-500)", nm: ["深", "夜"] },
+  { s: 2, e: 8, bg: "#eef0f4", tx: "var(--color-gray-500)", nm: ["凌", "晨"] }, // 凌晨在 8:00 之前（顶部）
 ];
 
 function dayIndex(date: Date): number { return (date.getDay() + 6) % 7; } // 周一=0
@@ -62,7 +64,7 @@ function durHours(t: { startTime: string; endTime: string | null }): number {
   return 1.5;
 }
 
-interface SchedTask { id: string; scheduleId?: string; title: string; taskType: string; status: string; importance: number; category: string | null; startTime: string; endTime: string | null; estimatedMinutes: number | null; source?: string; deadline?: string | null; description?: string | null; tags?: string | null; theme?: string | null; themeColor?: { color: string; deep: string; bg: string } | null; }
+interface SchedTask { id: string; scheduleId?: string; title: string; taskType: string; status: string; importance: number; category: string | null; startTime: string; endTime: string | null; estimatedMinutes: number | null; source?: string; deadline?: string | null; description?: string | null; tags?: string | null; theme?: string | null; themeColor?: { color: string; deep: string; bg: string } | null; completedAt?: string | null; departureAt?: string | null; actualMinutes?: number | null; }
 interface ActiveTask { id: string; title: string; taskType: string; status: string; importance: number; category: string | null; deadline: string | null; estimatedMinutes: number | null; tags: string | null; source?: string; theme?: string | null; children?: { id: string; title: string; status: string; completedAt?: string | null }[]; }
 
 /** V3：重叠排期轨道分配——贪心把时间冲突的任务分到不同"轨道"，并排渲染不遮挡 */
@@ -240,7 +242,9 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
   onDropTask?: (dayIndex: number, taskId: string, hour?: number) => void;
   peakHours?: string[]; onToggleFocus: () => void;
 }) {
-  const [midnight, setMidnight] = useState(false);
+  // 2026-08-11 时段重构：深夜（22-2，原"凌晨"改名）+ 凌晨（2-8）双折叠区
+  const [late, setLate] = useState(false);   // 深夜 22-2（+4h）
+  const [early, setEarly] = useState(false); // 凌晨 2-8（+6h）
   const [dragOverDay, setDragOverDay] = useState<number | null>(null);
   // 修复：实时时间线用 state 驱动，每分钟刷新（原来 render 时取一次，红线静止）
   const [now, setNow] = useState(() => new Date());
@@ -248,8 +252,68 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     const t = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(t);
   }, []);
-  const totalHours = TH + (midnight ? 4 : 0);
+  const totalHours = TH + (late ? 4 : 0) + (early ? 6 : 0); // 白天8-22 + 深夜22-2 + 凌晨2-8 = 24h 全
+  const S_eff = S - (early ? 6 : 0); // 轴起点：凌晨展开 → 2:00（凌晨在 8:00 之前）
   const totalPx = totalHours * H;
+  // 2026-08-11 段级归天：每任务提前切段，每段按"段开始时刻"归天（深夜段→22 点那天、凌晨段→当天），
+  // 跨段任务（如 1-5 点）的深夜段在 22 点那天、凌晨段在正常一天——不再整任务归一天
+  const nextCutMs = (d: Date) => {
+    const h = d.getHours();
+    const cands = [2, 8, 22].filter((b) => b > h).map((b) => { const x = new Date(d); x.setHours(b, 0, 0, 0); return x.getTime(); });
+    const nd = new Date(d); nd.setDate(nd.getDate() + 1); nd.setHours(0, 0, 0, 0); cands.push(nd.getTime());
+    return Math.min(...cands);
+  };
+  const segCache = useMemo(() => {
+    const m = new Map<string, { day: string; s: number; e: number; len: number }[]>();
+    for (const t of tasks) {
+      const bs = t.status === "completed" && t.departureAt ? t.departureAt : t.startTime;
+      const be = t.status === "completed" && t.completedAt ? t.completedAt : t.endTime;
+      const startDate = new Date(bs);
+      const endDate = be ? new Date(be) : new Date(startDate.getTime() + durHours(t) * 3600000);
+      const t1ms = endDate.getTime();
+      const segs: { day: string; s: number; e: number; len: number }[] = [];
+      let cur = new Date(startDate);
+      let guard = 0;
+      while (cur.getTime() < t1ms && guard < 200) {
+        guard++;
+        const cut = nextCutMs(cur);
+        const segEndMs = Math.min(cut, t1ms);
+        if (segEndMs <= cur.getTime()) break;
+        const sV = visualHour(cur.toISOString());
+        const eh = new Date(segEndMs).getHours();
+        // 段结束在 2 点 → 深夜段结束（底部 26）；8 点 → 凌晨段结束（顶部正常 8）
+        const eV = eh === 2 ? 26 : visualHour(new Date(segEndMs).toISOString());
+        const sd = new Date(cur);
+        const { displayDate } = realTimeToVisualTime(localDateStr(sd), sd.getHours());
+        segs.push({ day: displayDate, s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });
+        cur = new Date(segEndMs);
+      }
+      // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 1 块）；
+      // 2026-08-11 修复：合并后不得跨分区边界（22/26/8/2）——21:20-22 主轴段 + 22-23:20 深夜段
+      // 视觉连续但跨区，错误合并 → visibleSeg 全 false → 任务不渲染（如'创建笔记学习方法'排期 21:20-23:20）
+      const crossesBoundary = (a: number, b: number) =>
+        (a < 22 && b > 22) || (a < 26 && b > 26) || (a < 8 && b > 8) || (a < 2 && b > 2);
+      const merged: { day: string; s: number; e: number; len: number }[] = [];
+      for (const g of segs) {
+        const last = merged[merged.length - 1];
+        if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day && !crossesBoundary(last.s, g.e)) { last.e = g.e; last.len += g.len; }
+        else merged.push({ ...g });
+      }
+      m.set(t.id, merged);
+    }
+    return m;
+  }, [tasks]);
+  const dayIndexOf = (day: string) => Math.round((new Date(day + "T00:00:00").getTime() - weekStart.getTime()) / 86400000);
+  // 2026-08-11 自动展开（段级）：数据加载后若任一段落在深夜/凌晨折叠区 → 自动展开一次
+  // （防"任务丢失"错觉，如 P1 实际 01:14-04:25 跨段）；用户可手动收起
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || !tasks.length) return;
+    autoOpened.current = true;
+    const allSegs = [...segCache.values()].flat();
+    if (allSegs.some((g) => g.s >= S + TH && g.e <= S + TH + 4)) setLate(true);
+    if (allSegs.some((g) => g.s >= S - 6 && g.e <= S)) setEarly(true);
+  }, [tasks, segCache]);
   const todayIdx = dayIndex(now);
   const isThisWeek = weekOffset === 0;
   // 聚焦：真实今天 + 未来两天（用真实日期，不再取模回绕到本周过去的同星期几）
@@ -258,7 +322,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     : null;
   const visibleDays = focus ? [0, 1, 2] : [0, 1, 2, 3, 4, 5, 6];
   const hours: number[] = [];
-  for (let h = S; h < S + totalHours; h++) hours.push(h);
+  for (let h = S_eff; h < S_eff + totalHours; h++) hours.push(h);
   // 聚焦说明条（设计稿 .fn）
   const fDays = focusDates
     ? focusDates.map((dt) => DAYS[dayIndex(dt)])
@@ -316,13 +380,20 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         })}
       </div>
 
+      {/* 凌晨折叠（顶部 · 8:00 之前——2026-08-11 用户要求按钮放早上八点那边） */}
+      <div className="flex justify-center">
+        <button onClick={() => setEarly((m) => !m)} className="w-full text-center py-1.5 min-h-[36px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
+          {early ? "收起凌晨 ▲" : "展开凌晨 02:00 - 08:00 ▼"}
+        </button>
+      </div>
+
       {/* 日历主体（设计稿 .cb：pcol 时段标签列 + tcol 时间列 + 天列） */}
       <div className="flex">
         {/* 时段标签列（设计稿 .pcol：36px 竖排双字 · 无圆角铺满） */}
         <div className="plan-week-pcol w-9 shrink-0 relative" style={{ height: totalPx }}>
-          {PS.filter((p) => p.s < S + totalHours && p.e > S).map((p) => {
-            const top = Math.max(0, (p.s - S) * H);
-            const hh = (Math.min(p.e, S + totalHours) - Math.max(p.s, S)) * H;
+          {PS.filter((p) => p.s < S_eff + totalHours && p.e > S_eff).map((p) => {
+            const top = Math.max(0, (p.s - S_eff) * H);
+            const hh = (Math.min(p.e, S_eff + totalHours) - Math.max(p.s, S_eff)) * H;
             if (hh <= 0) return null;
             return (
               <div key={p.s} className="absolute left-0 right-0 flex items-center justify-center" style={{ top, height: hh, background: p.bg, color: p.tx }}>
@@ -337,20 +408,24 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
 
         {/* 时间列（设计稿 .tcol：60px · 标签左对齐 · 段边界 1.5px 加深线） */}
         <div className="plan-week-tcol w-[60px] shrink-0 relative border-r border-[var(--v2-border)]" style={{ height: totalPx }}>
-          {[...hours, S + totalHours].map((h) => (
-            <span key={h} className="absolute -translate-y-1/2 text-[13px] font-semibold text-[var(--v2-text2)] tabular-nums z-[1]" style={{ top: (h - S) * H, left: 6, background: "var(--v2-card)", padding: "0 3px" }}>
+          {[...hours, S_eff + totalHours].map((h) => (
+            <span key={h} className="absolute -translate-y-1/2 text-[13px] font-semibold text-[var(--v2-text2)] tabular-nums z-[1]" style={{ top: (h - S_eff) * H, left: 6, background: "var(--v2-card)", padding: "0 3px" }}>
               {String(h % 24).padStart(2, "0")}:00
             </span>
           ))}
           {hours.map((h) => (
-            <div key={`ln${h}`} className="absolute left-0 right-0" style={{ top: (h - S) * H + H, height: PS.some((p) => p.s === h + 1) ? 1.5 : 0.5, background: PS.some((p) => p.s === h + 1) ? "#d1d5db" : "var(--v2-border)" }} />
+            <div key={`ln${h}`} className="absolute left-0 right-0" style={{ top: (h - S_eff) * H + H, height: PS.some((p) => p.s === h + 1) ? 1.5 : 0.5, background: PS.some((p) => p.s === h + 1) ? "#d1d5db" : "var(--v2-border)" }} />
           ))}
         </div>
 
         {/* 天列（设计稿 .dc：今天 bg #fafafe · 时段背景 0.4 · 网格线 .5px / 段边界 1.5px） */}
         {visibleDays.map((d, i) => {
           const isTodayCell = focusDates ? i === 0 : isThisWeek && d === todayIdx;
-          const dayTasks = tasks.filter((t) => focusDates ? localDateStr(new Date(t.startTime)) === localDateStr(focusDates[i]) : visualDayIdx(t.startTime, weekStart) === d);
+          // 2026-08-11 段级归天：任务出现在"其任一段归天==列日"的列（跨段任务深夜段/凌晨段各归一天）
+          const dayKey = (t: SchedTask) => (t.status === "completed" && t.departureAt ? t.departureAt : t.startTime);
+          const dayTasks = tasks.filter((t) => focusDates
+            ? localDateStr(new Date(dayKey(t))) === localDateStr(focusDates[i])
+            : (segCache.get(t.id) ?? []).some((g) => dayIndexOf(g.day) === d));
           return (
             <div key={d} className={`plan-week-col flex-1 relative border-l ${isTodayCell ? "bg-[#fafafe]" : ""} ${dragOverDay === d ? "ring-2 ring-inset ring-[var(--v2-brand)]/40" : ""}`} style={{ height: totalPx, borderColor: "var(--v2-border)", minWidth: focus ? 140 : 130 }}
               onDragOver={(e) => {
@@ -369,39 +444,49 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 // 精确时间：根据鼠标在列内的 Y 坐标计算目标小时（半小时间隔）
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 const rawHour = S + (e.clientY - rect.top) / H;
-                const hour = Math.min(S + totalHours - 0.5, Math.max(S, Math.round(rawHour * 2) / 2));
+                const hour = Math.min(S_eff + totalHours - 0.5, Math.max(S_eff, Math.round(rawHour * 2) / 2));
                 onDropTask?.(d, taskId, hour);
               }}>
               {/* 时段分区背景（设计稿 .bgp opacity 0.4，淡化避免与任务块糊色） */}
-              {PS.filter((p) => p.s < S + totalHours && p.e > S).map((p) => {
-                const top = Math.max(0, (p.s - S) * H);
-                const hh = (Math.min(p.e, S + totalHours) - Math.max(p.s, S)) * H;
+              {PS.filter((p) => p.s < S_eff + totalHours && p.e > S_eff).map((p) => {
+                const top = Math.max(0, (p.s - S_eff) * H);
+                const hh = (Math.min(p.e, S_eff + totalHours) - Math.max(p.s, S_eff)) * H;
                 return hh > 0 ? <div key={p.s} className="absolute left-0 right-0" style={{ top, height: hh, background: p.bg, opacity: 0.45 }} /> : null;
               })}
               {/* 小时网格线（设计稿 .grl：0.5px / 段边界 .grl.ps：1.5px #d1d5db） */}
               {hours.map((h) => (
-                <div key={h} className="absolute left-0 right-0" style={{ top: (h - S) * H, height: PS.some((p) => p.s === h) ? 1.5 : 0.5, background: PS.some((p) => p.s === h) ? "#d1d5db" : "var(--v2-border)" }} />
+                <div key={h} className="absolute left-0 right-0" style={{ top: (h - S_eff) * H, height: PS.some((p) => p.s === h) ? 1.5 : 0.5, background: PS.some((p) => p.s === h) ? "#d1d5db" : "var(--v2-border)" }} />
               ))}
-              <div className="absolute left-0 right-0" style={{ top: totalPx, height: PS.some((p) => p.s === S + totalHours) ? 1.5 : 0.5, background: PS.some((p) => p.s === S + totalHours) ? "#d1d5db" : "var(--v2-border)" }} />
+              <div className="absolute left-0 right-0" style={{ top: totalPx, height: PS.some((p) => p.s === S_eff + totalHours) ? 1.5 : 0.5, background: PS.some((p) => p.s === S_eff + totalHours) ? "#d1d5db" : "var(--v2-border)" }} />
 
               {/* 任务块（设计稿 .tsk：left/right 4px · border-left 4px 分类色 · 0 6px 6px 3px 左直右圆 · 内容分级标题→时间≥46px→时长≥32px→角标 · V3：标题旁主题徽章 + 重叠轨道分列） */}
               {(() => {
                 const daySorted = dayTasks.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
                 const lanes = assignLanes(daySorted);
                 return daySorted.map((t, ti) => {
-                  const st = new Date(t.startTime);
-                  const sh = visualHour(t.startTime);
-                  const dur = durHours(t);
-                  const top = (sh - S) * H;
+                  // 2026-08-11 已完成任务条 = 实际执行时段（出发→完成），未完成保持排期预估。
+                  // 数据：week-calendar 已透传 completedAt/departureAt/actualMinutes
+                  const tDone = t.status === "completed";
+                  let blockStart = t.startTime;
+                  let blockEnd = t.endTime;
+                  let blockDur = durHours(t);
+                  if (tDone && t.departureAt && t.completedAt) {
+                    const dep = new Date(t.departureAt), done = new Date(t.completedAt);
+                    if (done.getTime() > dep.getTime()) {
+                      blockStart = t.departureAt;
+                      blockEnd = t.completedAt;
+                      blockDur = (done.getTime() - dep.getTime()) / 3600000;
+                    }
+                  }
+                  const st = new Date(blockStart);
+                  const sh = visualHour(blockStart);
+                  const dur = blockDur;
                   // B6 修复：未展开凌晨时跨夜任务块（如 23:00-01:00）截断到时间轴末端，不再溢出被裁剪
                   const axisEndH = S + totalHours;
-                  let hh = Math.max(dur * H, 22);
-                  const truncated = !midnight && sh + dur > axisEndH;
-                  if (truncated) hh = Math.max(22, (axisEndH - sh) * H);
                   const cs = catStyle(t.category);
                   // V3 C6：直读落库 theme（无则 tags/标题推断兜底）
                   const theme = (t as SchedTask).theme ?? resolveTheme(t.tags, t.title, t.category);
-                  const tm = `${String(st.getHours()).padStart(2, "0")}:${String(st.getMinutes()).padStart(2, "0")} - ${t.endTime ? new Date(t.endTime).toTimeString().slice(0, 5) : "--:--"}`;
+                  const tm = `${String(st.getHours()).padStart(2, "0")}:${String(st.getMinutes()).padStart(2, "0")} - ${blockEnd ? new Date(blockEnd).toTimeString().slice(0, 5) : "--:--"}`;
                   const ds = dur >= 1 ? `${Math.floor(dur)}h` : `${Math.round(dur * 60)}m`;
                   // 角标（设计稿 .tbr：AI 浅紫底靛蓝字 / 截止 浅红底红字 + 边框，绝对定位右上；两者同存时上下排）
                   const dlLabel = t.deadline ? (() => { const dl = new Date(t.deadline); return `${dl.getMonth() + 1}/${dl.getDate()} ${String(dl.getHours()).padStart(2, "0")}:${String(dl.getMinutes()).padStart(2, "0")}截止`; })() : null;
@@ -410,43 +495,67 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const laneInfo = lanes[ti];
                   const laneLeft = laneInfo.count > 1 ? `calc(${(laneInfo.lane * 100) / laneInfo.count}% + 2px)` : 4;
                   const laneRight = laneInfo.count > 1 ? `calc(${100 - (100 / laneInfo.count) * (laneInfo.lane + 1)}% + 2px)` : 4;
-                  return (
-                    <div key={t.id} className="plan-tsk absolute cursor-pointer hover:shadow-sm transition-shadow z-[1] overflow-hidden"
-                      style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: focus ? "8px 10px" : "7px 8px" }}
-                      draggable
-                      onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.effectAllowed = "copyMove"; }}
-                      onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
-                      title={`${t.title}\n${tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
-                      {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
-                      {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
-                      {/* 标题行：右侧预留 AI 徽章 / 中矮块的时长角标位，截断不撞角标 */}
-                      <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: t.source === "ai" ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
-                        <div className="plan-tsk-title text-[15px] truncate" style={{ fontWeight: 600, lineHeight: 1.35, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                        {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
-                      </div>
-                      {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}
-                      {hh >= 46 && (
-                        <div className="flex items-center justify-between gap-2 text-[13px] text-[var(--v2-text2)] tabular-nums mt-1 min-w-0">
-                          <span className="truncate">{tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}截止</span>}</span>
-                          <span className="shrink-0">{ds}</span>
+                  // 2026-08-11 段级归天：段在 segCache 预计算（按段开始时刻归天）；
+                  // 此处仅取"归天==当前列"的段 + 折叠过滤
+                  const visibleSeg = (g: { s: number; e: number }) =>
+                    (g.s >= S && g.e <= S + TH) ||
+                    (late && g.s >= S + TH && g.e <= S + TH + 4) ||
+                    (early && g.s >= S - 6 && g.e <= S); // 凌晨区在顶部（2-8）
+                  const colSegs = (segCache.get(t.id) ?? []).filter((g) => focusDates || dayIndexOf(g.day) === d);
+                  const segs = colSegs.filter((g) => g.e > g.s && visibleSeg(g));
+                  const foldedTip = colSegs.some((g) => g.e > g.s && !visibleSeg(g)); // 有段落在折叠分组
+                  return segs.map((seg, si) => {
+                    const top = (seg.s - S_eff) * H;
+                    const hh = Math.max((seg.e - seg.s) * H, 22);
+                    const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
+                    const isLateSeg = seg.s >= S + TH;       // 深夜段（底部 22-2）
+                    const isNightSeg = isEarlySeg || isLateSeg;
+                    return (
+                      <div key={`${t.id}:${si}`} className="plan-tsk absolute cursor-pointer hover:shadow-sm transition-shadow z-[1] overflow-hidden"
+                        style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: focus ? "8px 10px" : "7px 8px" }}
+                        draggable
+                        onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.effectAllowed = "copyMove"; }}
+                        onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
+                        title={`${t.title}\n${tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
+                        {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
+                        {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
+                        {/* 深夜/凌晨段标记（跨段任务的段归属提示） */}
+                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
+                        {/* 标题：2026-08-10 多行换行（原单行 nowrap 截断——高卡片大量空白却只显示一行）；
+                            按卡高自适应：高卡最多 3 行、矮卡 2 行，充分利用卡片空间显示完整名字 */}
+                        <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (t.source === "ai" || isNightSeg) ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
+                          <div className="plan-tsk-title text-[15px]" style={{
+                            fontWeight: 600, lineHeight: 1.35, color: "#111827",
+                            display: "-webkit-box", WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: hh >= 60 ? 3 : 2,
+                            overflow: "hidden", wordBreak: "break-word",
+                          }}>{t.title}</div>
+                          {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
-                      )}
-                      {/* 时长角标（中矮块 32-46px：无时间行，右下角独立显示） */}
-                      {hh >= 32 && hh < 46 && <div className="absolute right-1.5 text-[13px] text-[var(--v2-text2)]" style={{ bottom: 4 }}>{ds}</div>}
-                      {/* B6：截断提示（跨夜 · 未展开凌晨） */}
-                      {truncated && <div className="absolute right-1.5 bottom-0.5 text-[11px] font-semibold text-[var(--v2-text3)]" style={{ background: cs.bg, padding: "0 3px" }}>⋯ 跨夜</div>}
-                    </div>
-                  );
+                        {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}
+                        {hh >= 46 && (
+                          <div className="flex items-center justify-between gap-2 text-[13px] text-[var(--v2-text2)] tabular-nums mt-1 min-w-0">
+                            <span className="truncate">{tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}截止</span>}</span>
+                            <span className="shrink-0">{ds}</span>
+                          </div>
+                        )}
+                        {/* 时长角标（中矮块 32-46px：无时间行，右下角独立显示） */}
+                        {hh >= 32 && hh < 46 && <div className="absolute right-1.5 text-[13px] text-[var(--v2-text2)]" style={{ bottom: 4 }}>{ds}</div>}
+                        {/* B6：截断提示（跨夜/折叠分组） */}
+                        {si === segs.length - 1 && foldedTip && <div className="absolute right-1.5 bottom-0.5 text-[11px] font-semibold text-[var(--v2-text3)]" style={{ background: cs.bg, padding: "0 3px" }}>⋯ 折叠区</div>}
+                      </div>
+                    );
+                  });
                 });
               })()}
 
               {/* 聚焦模式 + 本周：今天实时时间线（设计稿 .nl/.nd/.nlb：粉色呼吸 + 圆点 + 白底时间标签） */}
               {focus && isThisWeek && isTodayCell && (() => {
                 const nh = now.getHours() + now.getMinutes() / 60;
-                if (nh < S || nh > S + totalHours) return null;
+                if (nh < S_eff || nh > S_eff + totalHours) return null;
                 return (
                   <>
-                    <div className="absolute left-0 right-0 animate-pulse z-[2]" style={{ top: (nh - S) * H, height: 1, background: "#ec4899" }} />
+                    <div className="absolute left-0 right-0 animate-pulse z-[2]" style={{ top: (nh - S_eff) * H, height: 1, background: "#ec4899" }} />
                     <span className="absolute z-[2] animate-pulse" style={{ left: -4, top: (nh - S) * H, transform: "translate(-50%,-50%)", width: 8, height: 8, borderRadius: "50%", background: "#ec4899" }} />
                     <span className="absolute z-[2] animate-pulse" style={{ right: 2, top: (nh - S) * H, transform: "translateY(-50%)", fontSize: 11, color: "#ec4899", fontWeight: 500, background: "#fff", padding: "0 3px" }}>
                       {String(now.getHours()).padStart(2, "0")}:{String(now.getMinutes()).padStart(2, "0")}
@@ -459,10 +568,10 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         })}
       </div>
 
-      {/* 凌晨折叠（设计稿 .mt：居中 11px 灰） */}
+      {/* 深夜折叠（底部） */}
       <div className="flex justify-center mt-1">
-        <button onClick={() => setMidnight((m) => !m)} className="w-full text-center py-2.5 min-h-[44px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
-          {midnight ? "收起凌晨 ▲" : "展开凌晨 22:00 - 02:00 ▼"}
+        <button onClick={() => setLate((m) => !m)} className="w-full text-center py-2 min-h-[40px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
+          {late ? "收起深夜 ▲" : "展开深夜 22:00 - 02:00 ▼"}
         </button>
       </div>
 

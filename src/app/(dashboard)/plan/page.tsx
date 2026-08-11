@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { DOMAINS, normalizeCategory, resolveTheme, THEMES } from "@/lib/plan/colors";
 import { ThemeBadge } from "@/components/task/ThemeBadge";
 import { realTimeToVisualTime } from "@/lib/plan/time";
@@ -245,23 +245,6 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
   // 2026-08-11 时段重构：深夜（22-2，原"凌晨"改名）+ 凌晨（2-8）双折叠区
   const [late, setLate] = useState(false);   // 深夜 22-2（+4h）
   const [early, setEarly] = useState(false); // 凌晨 2-8（+6h）
-  // 2026-08-11 自动展开：数据加载后若任务落在折叠分组 → 自动展开一次（防止"任务丢失"错觉，
-  // 如 P1 出发时间在凌晨 01:14 → 默认折叠看不到）；用户可手动收起
-  const autoOpened = useRef(false);
-  useEffect(() => {
-    if (autoOpened.current || !tasks.length) return;
-    autoOpened.current = true;
-    const hasLate = tasks.some((t) => {
-      const h = new Date(t.departureAt || t.startTime).getHours();
-      return h >= 22 || (h >= 0 && h < 2);
-    });
-    const hasEarly = tasks.some((t) => {
-      const h = new Date(t.departureAt || t.startTime).getHours();
-      return h >= 2 && h < 8;
-    });
-    if (hasLate) setLate(true);
-    if (hasEarly) setEarly(true);
-  }, [tasks]);
   const [dragOverDay, setDragOverDay] = useState<number | null>(null);
   // 修复：实时时间线用 state 驱动，每分钟刷新（原来 render 时取一次，红线静止）
   const [now, setNow] = useState(() => new Date());
@@ -272,6 +255,61 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
   const totalHours = TH + (late ? 4 : 0) + (early ? 6 : 0); // 白天8-22 + 深夜22-2 + 凌晨2-8 = 24h 全
   const S_eff = S - (early ? 6 : 0); // 轴起点：凌晨展开 → 2:00（凌晨在 8:00 之前）
   const totalPx = totalHours * H;
+  // 2026-08-11 段级归天：每任务提前切段，每段按"段开始时刻"归天（深夜段→22 点那天、凌晨段→当天），
+  // 跨段任务（如 1-5 点）的深夜段在 22 点那天、凌晨段在正常一天——不再整任务归一天
+  const nextCutMs = (d: Date) => {
+    const h = d.getHours();
+    const cands = [2, 8, 22].filter((b) => b > h).map((b) => { const x = new Date(d); x.setHours(b, 0, 0, 0); return x.getTime(); });
+    const nd = new Date(d); nd.setDate(nd.getDate() + 1); nd.setHours(0, 0, 0, 0); cands.push(nd.getTime());
+    return Math.min(...cands);
+  };
+  const segCache = useMemo(() => {
+    const m = new Map<string, { day: string; s: number; e: number; len: number }[]>();
+    for (const t of tasks) {
+      const bs = t.status === "completed" && t.departureAt ? t.departureAt : t.startTime;
+      const be = t.status === "completed" && t.completedAt ? t.completedAt : t.endTime;
+      const startDate = new Date(bs);
+      const endDate = be ? new Date(be) : new Date(startDate.getTime() + durHours(t) * 3600000);
+      const t1ms = endDate.getTime();
+      const segs: { day: string; s: number; e: number; len: number }[] = [];
+      let cur = new Date(startDate);
+      let guard = 0;
+      while (cur.getTime() < t1ms && guard < 200) {
+        guard++;
+        const cut = nextCutMs(cur);
+        const segEndMs = Math.min(cut, t1ms);
+        if (segEndMs <= cur.getTime()) break;
+        const sV = visualHour(cur.toISOString());
+        const eh = new Date(segEndMs).getHours();
+        // 段结束在 2 点 → 深夜段结束（底部 26）；8 点 → 凌晨段结束（顶部正常 8）
+        const eV = eh === 2 ? 26 : visualHour(new Date(segEndMs).toISOString());
+        const sd = new Date(cur);
+        const { displayDate } = realTimeToVisualTime(localDateStr(sd), sd.getHours());
+        segs.push({ day: displayDate, s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });
+        cur = new Date(segEndMs);
+      }
+      // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 1 块）
+      const merged: { day: string; s: number; e: number; len: number }[] = [];
+      for (const g of segs) {
+        const last = merged[merged.length - 1];
+        if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day) { last.e = g.e; last.len += g.len; }
+        else merged.push({ ...g });
+      }
+      m.set(t.id, merged);
+    }
+    return m;
+  }, [tasks]);
+  const dayIndexOf = (day: string) => Math.round((new Date(day + "T00:00:00").getTime() - weekStart.getTime()) / 86400000);
+  // 2026-08-11 自动展开（段级）：数据加载后若任一段落在深夜/凌晨折叠区 → 自动展开一次
+  // （防"任务丢失"错觉，如 P1 实际 01:14-04:25 跨段）；用户可手动收起
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || !tasks.length) return;
+    autoOpened.current = true;
+    const allSegs = [...segCache.values()].flat();
+    if (allSegs.some((g) => g.s >= S + TH && g.e <= S + TH + 4)) setLate(true);
+    if (allSegs.some((g) => g.s >= S - 6 && g.e <= S)) setEarly(true);
+  }, [tasks, segCache]);
   const todayIdx = dayIndex(now);
   const isThisWeek = weekOffset === 0;
   // 聚焦：真实今天 + 未来两天（用真实日期，不再取模回绕到本周过去的同星期几）
@@ -379,10 +417,11 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         {/* 天列（设计稿 .dc：今天 bg #fafafe · 时段背景 0.4 · 网格线 .5px / 段边界 1.5px） */}
         {visibleDays.map((d, i) => {
           const isTodayCell = focusDates ? i === 0 : isThisWeek && d === todayIdx;
-          // 2026-08-11 归天修复：已完成任务用实际开始时间（departureAt）归天——P1 排期在次日凌晨
-          // （折叠区）但实际在当天白天 → 原用排期归天导致"丢失"；统一按实际时段归属
+          // 2026-08-11 段级归天：任务出现在"其任一段归天==列日"的列（跨段任务深夜段/凌晨段各归一天）
           const dayKey = (t: SchedTask) => (t.status === "completed" && t.departureAt ? t.departureAt : t.startTime);
-          const dayTasks = tasks.filter((t) => focusDates ? localDateStr(new Date(dayKey(t))) === localDateStr(focusDates[i]) : visualDayIdx(dayKey(t), weekStart) === d);
+          const dayTasks = tasks.filter((t) => focusDates
+            ? localDateStr(new Date(dayKey(t))) === localDateStr(focusDates[i])
+            : (segCache.get(t.id) ?? []).some((g) => dayIndexOf(g.day) === d));
           return (
             <div key={d} className={`plan-week-col flex-1 relative border-l ${isTodayCell ? "bg-[#fafafe]" : ""} ${dragOverDay === d ? "ring-2 ring-inset ring-[var(--v2-brand)]/40" : ""}`} style={{ height: totalPx, borderColor: "var(--v2-border)", minWidth: focus ? 140 : 130 }}
               onDragOver={(e) => {
@@ -452,42 +491,15 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const laneInfo = lanes[ti];
                   const laneLeft = laneInfo.count > 1 ? `calc(${(laneInfo.lane * 100) / laneInfo.count}% + 2px)` : 4;
                   const laneRight = laneInfo.count > 1 ? `calc(${100 - (100 / laneInfo.count) * (laneInfo.lane + 1)}% + 2px)` : 4;
-                  // 2026-08-11 真实时间切段：任务起止按 2/8/22 点边界切——凌晨→白天（8:00）时视觉小时跳变
-                  // （31.6→8），连续区间切段会丢失段；每段独立算视觉位置（如 07:37→11:20 = 凌晨块+白天块）
-                  const startDate = new Date(blockStart);
-                  const endDate = blockEnd ? new Date(blockEnd) : new Date(startDate.getTime() + dur * 3600000);
-                  const t0ms = startDate.getTime(), t1ms = endDate.getTime();
-                  const nextCutMs = (d: Date) => {
-                    const h = d.getHours();
-                    const cands = [2, 8, 22].filter((b) => b > h).map((b) => { const x = new Date(d); x.setHours(b, 0, 0, 0); return x.getTime(); });
-                    const nd = new Date(d); nd.setDate(nd.getDate() + 1); nd.setHours(0, 0, 0, 0); cands.push(nd.getTime());
-                    return Math.min(...cands);
-                  };
-                  const splitSegs: { s: number; e: number; len: number }[] = [];
-                  let cur = new Date(startDate);
-                  while (cur.getTime() < t1ms) {
-                    const cut = nextCutMs(cur);
-                    const segEndMs = Math.min(cut, t1ms);
-                    const sV = visualHour(cur.toISOString());
-                    const eh = new Date(segEndMs).getHours();
-                    // 段结束在 2 点 → 深夜段结束（深夜区底部延伸 22-26 的末尾）；8 点 → 凌晨段结束（顶部正常 8）
-                    const eV = eh === 2 ? 26 : visualHour(new Date(segEndMs).toISOString());
-                    splitSegs.push({ s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });
-                    cur = new Date(segEndMs);
-                  }
-                  // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 合成 1 块；跨区分开）
-                  const mergedSegs: { s: number; e: number; len: number }[] = [];
-                  for (const g of splitSegs) {
-                    const last = mergedSegs[mergedSegs.length - 1];
-                    if (last && Math.abs(last.e - g.s) < 0.001) { last.e = g.e; last.len += g.len; }
-                    else mergedSegs.push({ ...g });
-                  }
+                  // 2026-08-11 段级归天：段在 segCache 预计算（按段开始时刻归天）；
+                  // 此处仅取"归天==当前列"的段 + 折叠过滤
                   const visibleSeg = (g: { s: number; e: number }) =>
                     (g.s >= S && g.e <= S + TH) ||
                     (late && g.s >= S + TH && g.e <= S + TH + 4) ||
                     (early && g.s >= S - 6 && g.e <= S); // 凌晨区在顶部（2-8）
-                  const segs = mergedSegs.filter((g) => g.e > g.s && visibleSeg(g));
-                  const foldedTip = splitSegs.some((g) => g.e > g.s && !visibleSeg(g)); // 有段落在折叠分组
+                  const colSegs = (segCache.get(t.id) ?? []).filter((g) => focusDates || dayIndexOf(g.day) === d);
+                  const segs = colSegs.filter((g) => g.e > g.s && visibleSeg(g));
+                  const foldedTip = colSegs.some((g) => g.e > g.s && !visibleSeg(g)); // 有段落在折叠分组
                   return segs.map((seg, si) => {
                     const top = (seg.s - S_eff) * H;
                     const hh = Math.max((seg.e - seg.s) * H, 22);

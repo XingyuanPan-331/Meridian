@@ -975,20 +975,35 @@ export default function PlanPage() {
   }, [load]);
 
   // 排期/调整：moveSchedule（修复 P1-4：带 scheduleId 只替换目标那条，防重复任务折叠）
+  // 2026-08-12 修复：已完成任务重排 → 同步实际时段（departureAt/completedAt）——时间轴块按实际时段
+  // 显示，若不同步，调整排期后详情显示新时间但时间轴块停在旧实际时段（如'确定笔记方法'调到 2:40
+  // 后周三 2 点无块）。同步在任务本身（taskId），避免锚点下沉误更新其他任务
+  const syncActualIfCompleted = async (taskId: string, status: string | undefined, newStart: string, newEnd: string) => {
+    if (status !== "completed") return;
+    try {
+      await fetch(`/api/tasks/${taskId}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ departureAt: newStart, completedAt: newEnd }),
+      });
+    } catch { /* 同步失败不阻断排期 */ }
+  };
+
   const saveSchedule = useCallback(async (taskId: string, newStart: string, newEnd: string, scheduleId?: string) => {
     setBusy(true);
     try {
+      const s = scheduled.find((x) => x.id === taskId);
       const r = await fetch("/api/plan/apply-decision", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ changes: [{ taskId, newStart, newEnd, scheduleId }] }),
       });
       if (!r.ok) throw new Error("排期失败");
+      await syncActualIfCompleted(taskId, s?.status, newStart, newEnd);
       setModal(null);
       setDetail(null);
       await load(true);
     } catch { setError(true); }
     finally { setBusy(false); }
-  }, [load]);
+  }, [load, scheduled]);
 
   // 拖拽到日历：自动转为时间块（目标日按当前偏移周的 weekStart 计算）
   // hour 传入（任务块拖动，鼠标位置精确计算）；未传入（收集箱拖入）→ 当天 10:00 或下一整点
@@ -1020,6 +1035,7 @@ export default function PlanPage() {
         body: JSON.stringify({ changes: [{ taskId, newStart: start.toISOString(), newEnd: new Date(start.getTime() + dur * 60000).toISOString(), scheduleId: sched?.scheduleId }] }),
       });
       if (!r.ok) throw new Error("排期失败");
+      await syncActualIfCompleted(taskId, sched?.status, start.toISOString(), new Date(start.getTime() + dur * 60000).toISOString());
       await load(true);
     } catch { setError(true); }
     finally { setBusy(false); }

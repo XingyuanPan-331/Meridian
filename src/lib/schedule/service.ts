@@ -114,6 +114,11 @@ export async function moveSchedule(userId: string, taskId: string, newStart: Dat
 
   const schedule = await prisma.$transaction(async (tx) => {
     await tx.schedule.deleteMany({ where: oldWhere });
+    // 2026-08-11 修复：拖动带 scheduleId 时清理该任务的其他重复排期（拖拽历史累积的多条排期
+    // → 任务只保留目标条 + 新增条；否则'创建笔记学习方法'被拖出 3 条排期无法正常拖动）
+    if (targetScheduleId) {
+      await tx.schedule.deleteMany({ where: { taskId, userId, id: { not: targetScheduleId } } });
+    }
     // 下沉时清掉锚点旧排期，避免重复
     if (effectiveTaskId !== taskId) {
       await tx.schedule.deleteMany({ where: { taskId: effectiveTaskId, userId } });

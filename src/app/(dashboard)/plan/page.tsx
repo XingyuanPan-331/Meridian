@@ -442,8 +442,10 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 const taskId = e.dataTransfer.getData("text/task-id");
                 if (!taskId) return;
                 // 精确时间：根据鼠标在列内的 Y 坐标计算目标小时（半小时间隔）
+                // 2026-08-11 修复：rawHour 用 S_eff（轴起点）而非 S——凌晨展开后轴从 2:00 起，
+                // 拖到凌晨区（顶部）原逻辑算成主轴时间（错位 6h）→ 来回拖产生重复/错乱排期
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                const rawHour = S + (e.clientY - rect.top) / H;
+                const rawHour = S_eff + (e.clientY - rect.top) / H;
                 const hour = Math.min(S_eff + totalHours - 0.5, Math.max(S_eff, Math.round(rawHour * 2) / 2));
                 onDropTask?.(d, taskId, hour);
               }}>

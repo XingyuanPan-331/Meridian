@@ -23,6 +23,7 @@ export interface FocusCardV2Data {
   parent: string;
   purpose?: string;                 // A 动机行（FCV2：直读后端 Task.purpose 继承后值）
   departureAt?: string | null;      // 出发时刻（FCV2：后端 Task.departureAt）
+  completedAt?: string | null;      // 2026-08-11：结束时刻（实际完成——详情显示"几点结束"）
   phase: FcV2Phase;
   // 时间
   scheduledStart?: string | null; scheduledEnd?: string | null; location?: string;
@@ -666,9 +667,11 @@ export function FocusCardV2({ card, onStart, onComplete, onCompleteItem, onItemS
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-1.5 mt-1">
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
               <span className={`text-[9.5px] font-semibold px-2 py-0.5 rounded-full ${stateTag.cls}`}>{stateTag.txt}</span>
               {depLabel && <span className="text-[10px] text-[var(--v2-text3)]">从 {depLabel} 出发{demo ? "（mock departureAt）" : ""}</span>}
+              {/* 2026-08-11：已完成任务显示结束时间（实际完成时刻）——开始/结束成对展示 */}
+              {done && card.completedAt && <span className="text-[10px] text-[var(--v2-text3)]">· 到 {new Date(card.completedAt).toTimeString().slice(0, 5)} 结束</span>}
             </div>
 
             {/* ═══ C 执行工具（副本 col2-right：任务名称下即清单/时间块/打卡） ═══ */}

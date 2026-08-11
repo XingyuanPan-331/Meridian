@@ -62,7 +62,7 @@ function durHours(t: { startTime: string; endTime: string | null }): number {
   return 1.5;
 }
 
-interface SchedTask { id: string; scheduleId?: string; title: string; taskType: string; status: string; importance: number; category: string | null; startTime: string; endTime: string | null; estimatedMinutes: number | null; source?: string; deadline?: string | null; description?: string | null; tags?: string | null; theme?: string | null; themeColor?: { color: string; deep: string; bg: string } | null; }
+interface SchedTask { id: string; scheduleId?: string; title: string; taskType: string; status: string; importance: number; category: string | null; startTime: string; endTime: string | null; estimatedMinutes: number | null; source?: string; deadline?: string | null; description?: string | null; tags?: string | null; theme?: string | null; themeColor?: { color: string; deep: string; bg: string } | null; completedAt?: string | null; departureAt?: string | null; actualMinutes?: number | null; }
 interface ActiveTask { id: string; title: string; taskType: string; status: string; importance: number; category: string | null; deadline: string | null; estimatedMinutes: number | null; tags: string | null; source?: string; theme?: string | null; children?: { id: string; title: string; status: string; completedAt?: string | null }[]; }
 
 /** V3：重叠排期轨道分配——贪心把时间冲突的任务分到不同"轨道"，并排渲染不遮挡 */
@@ -389,9 +389,23 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 const daySorted = dayTasks.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
                 const lanes = assignLanes(daySorted);
                 return daySorted.map((t, ti) => {
-                  const st = new Date(t.startTime);
-                  const sh = visualHour(t.startTime);
-                  const dur = durHours(t);
+                  // 2026-08-11 已完成任务条 = 实际执行时段（出发→完成），未完成保持排期预估。
+                  // 数据：week-calendar 已透传 completedAt/departureAt/actualMinutes
+                  const tDone = t.status === "completed";
+                  let blockStart = t.startTime;
+                  let blockEnd = t.endTime;
+                  let blockDur = durHours(t);
+                  if (tDone && t.departureAt && t.completedAt) {
+                    const dep = new Date(t.departureAt), done = new Date(t.completedAt);
+                    if (done.getTime() > dep.getTime()) {
+                      blockStart = t.departureAt;
+                      blockEnd = t.completedAt;
+                      blockDur = (done.getTime() - dep.getTime()) / 3600000;
+                    }
+                  }
+                  const st = new Date(blockStart);
+                  const sh = visualHour(blockStart);
+                  const dur = blockDur;
                   const top = (sh - S) * H;
                   // B6 修复：未展开凌晨时跨夜任务块（如 23:00-01:00）截断到时间轴末端，不再溢出被裁剪
                   const axisEndH = S + totalHours;
@@ -401,7 +415,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const cs = catStyle(t.category);
                   // V3 C6：直读落库 theme（无则 tags/标题推断兜底）
                   const theme = (t as SchedTask).theme ?? resolveTheme(t.tags, t.title, t.category);
-                  const tm = `${String(st.getHours()).padStart(2, "0")}:${String(st.getMinutes()).padStart(2, "0")} - ${t.endTime ? new Date(t.endTime).toTimeString().slice(0, 5) : "--:--"}`;
+                  const tm = `${String(st.getHours()).padStart(2, "0")}:${String(st.getMinutes()).padStart(2, "0")} - ${blockEnd ? new Date(blockEnd).toTimeString().slice(0, 5) : "--:--"}`;
                   const ds = dur >= 1 ? `${Math.floor(dur)}h` : `${Math.round(dur * 60)}m`;
                   // 角标（设计稿 .tbr：AI 浅紫底靛蓝字 / 截止 浅红底红字 + 边框，绝对定位右上；两者同存时上下排）
                   const dlLabel = t.deadline ? (() => { const dl = new Date(t.deadline); return `${dl.getMonth() + 1}/${dl.getDate()} ${String(dl.getHours()).padStart(2, "0")}:${String(dl.getMinutes()).padStart(2, "0")}截止`; })() : null;
@@ -419,9 +433,15 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                       title={`${t.title}\n${tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
                       {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
                       {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
-                      {/* 标题行：右侧预留 AI 徽章 / 中矮块的时长角标位，截断不撞角标 */}
+                      {/* 标题：2026-08-10 多行换行（原单行 nowrap 截断——高卡片大量空白却只显示一行）；
+                          按卡高自适应：高卡最多 3 行、矮卡 2 行，充分利用卡片空间显示完整名字 */}
                       <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: t.source === "ai" ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
-                        <div className="plan-tsk-title text-[15px] truncate" style={{ fontWeight: 600, lineHeight: 1.35, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
+                        <div className="plan-tsk-title text-[15px]" style={{
+                          fontWeight: 600, lineHeight: 1.35, color: "#111827",
+                          display: "-webkit-box", WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: hh >= 60 ? 3 : 2,
+                          overflow: "hidden", wordBreak: "break-word",
+                        }}>{t.title}</div>
                         {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                       </div>
                       {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}

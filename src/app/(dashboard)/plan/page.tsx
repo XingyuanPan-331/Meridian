@@ -288,15 +288,13 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         segs.push({ day: displayDate, s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });
         cur = new Date(segEndMs);
       }
-      // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 1 块）；
-      // 2026-08-11 修复：合并后不得跨分区边界（22/26/8/2）——21:20-22 主轴段 + 22-23:20 深夜段
-      // 视觉连续但跨区，错误合并 → visibleSeg 全 false → 任务不渲染（如'创建笔记学习方法'排期 21:20-23:20）
-      const crossesBoundary = (a: number, b: number) =>
-        (a < 22 && b > 22) || (a < 26 && b > 26) || (a < 8 && b > 8) || (a < 2 && b > 2);
+      // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 1 块；21-22 主轴 + 22-01:20 深夜
+      // 同列视觉连续 → 1 块，不再重复显示任务信息）；跨天段（day 不同）不合并（深夜段归 22 点那天、
+      // 凌晨段归正常一天——段级归天语义）
       const merged: { day: string; s: number; e: number; len: number }[] = [];
       for (const g of segs) {
         const last = merged[merged.length - 1];
-        if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day && !crossesBoundary(last.s, g.e)) { last.e = g.e; last.len += g.len; }
+        if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day) { last.e = g.e; last.len += g.len; }
         else merged.push({ ...g });
       }
       m.set(t.id, merged);
@@ -499,16 +497,18 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const laneRight = laneInfo.count > 1 ? `calc(${100 - (100 / laneInfo.count) * (laneInfo.lane + 1)}% + 2px)` : 4;
                   // 2026-08-11 段级归天：段在 segCache 预计算（按段开始时刻归天）；
                   // 此处仅取"归天==当前列"的段 + 折叠过滤
-                  const visibleSeg = (g: { s: number; e: number }) =>
-                    (g.s >= S && g.e <= S + TH) ||
-                    (late && g.s >= S + TH && g.e <= S + TH + 4) ||
-                    (early && g.s >= S - 6 && g.e <= S); // 凌晨区在顶部（2-8）
+                  // 2026-08-12 可见性：段与展开后轴 [S_eff, S_eff+totalHours] 有交集即可见；
+                  // 渲染时裁剪到可见范围（折叠深夜 → 跨段块只显示主轴部分，不溢出）
+                  const axisTop = S_eff, axisBottom = S_eff + totalHours;
                   const colSegs = (segCache.get(t.id) ?? []).filter((g) => focusDates || dayIndexOf(g.day) === d);
-                  const segs = colSegs.filter((g) => g.e > g.s && visibleSeg(g));
-                  const foldedTip = colSegs.some((g) => g.e > g.s && !visibleSeg(g)); // 有段落在折叠分组
+                  const segs = colSegs.filter((g) => g.e > axisTop && g.s < axisBottom); // 与可见轴有交集
+                  const foldedTip = colSegs.some((g) => g.e > g.s && (g.e > axisBottom || g.s < axisTop)); // 有段落在折叠区
                   return segs.map((seg, si) => {
-                    const top = (seg.s - S_eff) * H;
-                    const hh = Math.max((seg.e - seg.s) * H, 22);
+                    const vS = Math.max(seg.s, axisTop);
+                    const vE = Math.min(seg.e, axisBottom);
+                    if (vE <= vS) return null;
+                    const top = (vS - S_eff) * H;
+                    const hh = Math.max((vE - vS) * H, 22);
                     const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
                     const isLateSeg = seg.s >= S + TH;       // 深夜段（底部 22-2）
                     const isNightSeg = isEarlySeg || isLateSeg;

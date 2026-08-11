@@ -281,8 +281,10 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         if (segEndMs <= cur.getTime()) break;
         const sV = visualHour(cur.toISOString());
         const eh = new Date(segEndMs).getHours();
-        // 段结束在 2 点 → 深夜段结束（底部 26）；8 点 → 凌晨段结束（顶部正常 8）
-        const eV = eh === 2 ? 26 : visualHour(new Date(segEndMs).toISOString());
+        // 段结束恰在 2:00 整 → 深夜段结束（底部 26）；2:40 等非整点用实际视觉小时（凌晨顶部 2.67）——
+        // 2026-08-12 修复：原 eh===2 无分钟判断，2:40 结束被误判成 26 → 凌晨段 [2,26] 霸占全轴
+        const em0 = new Date(segEndMs);
+        const eV = (em0.getHours() === 2 && em0.getMinutes() === 0) ? 26 : visualHour(em0.toISOString());
         const sd = new Date(cur);
         const { displayDate } = realTimeToVisualTime(localDateStr(sd), sd.getHours());
         segs.push({ day: displayDate, s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });

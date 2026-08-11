@@ -46,20 +46,16 @@ export function visualTimeToRealTime(
 export function realTimeToVisualTime(
   realDate: string, hour: number
 ): { displayDate: string; displayHour: number } {
-  // 2026-08-11 时段重构：深夜 22-2 / 凌晨 2-8 / 白天 8-22 三段轴
+  // 2026-08-11 时段重构（v2）：深夜 22-2 / 凌晨 2-8（顶部）/ 白天 8-22
   // - 0-2（深夜区延伸）：归前一天，显示在前一天轴末尾（24-26）
-  // - 2-8（凌晨区）：归当天，显示在当天轴末尾延伸（26-32，凌晨分组）
+  // - 2-8（凌晨区）：归当天，显示在当天轴顶部（2-8，凌晨分组在 8:00 之前）
   if (hour >= 0 && hour < 2) {
     const d = new Date(realDate + "T00:00:00");
     d.setDate(d.getDate() - 1);
     const visualDate = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
     return { displayDate: visualDate, displayHour: hour + 24 };
   }
-  if (hour >= 2 && hour < 8) {
-    // 凌晨 2-8：当天轴末尾延伸（26-32）——凌晨分组
-    return { displayDate: realDate, displayHour: hour + 24 };
-  }
-  // Normal hours: display date = real date
+  // Normal hours（含 2-8 凌晨，当天顶部）: display date = real date
   return { displayDate: realDate, displayHour: hour };
 }
 

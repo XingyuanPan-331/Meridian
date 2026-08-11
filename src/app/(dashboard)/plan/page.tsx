@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { DOMAINS, normalizeCategory, resolveTheme, THEMES } from "@/lib/plan/colors";
 import { ThemeBadge } from "@/components/task/ThemeBadge";
 import { realTimeToVisualTime } from "@/lib/plan/time";
@@ -27,7 +27,7 @@ const PS = [
   { s: 13, e: 18, bg: "#fef9e7", tx: "#b45309", nm: ["下", "午"] },
   { s: 18, e: 22, bg: "var(--v2-purple-bg)", tx: "var(--v2-purple)", nm: ["晚", "上"] },
   { s: 22, e: 26, bg: "var(--color-gray-100)", tx: "var(--color-gray-500)", nm: ["深", "夜"] },
-  { s: 26, e: 32, bg: "#eef0f4", tx: "var(--color-gray-500)", nm: ["凌", "晨"] },
+  { s: 2, e: 8, bg: "#eef0f4", tx: "var(--color-gray-500)", nm: ["凌", "晨"] }, // 凌晨在 8:00 之前（顶部）
 ];
 
 function dayIndex(date: Date): number { return (date.getDay() + 6) % 7; } // 周一=0
@@ -245,6 +245,23 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
   // 2026-08-11 时段重构：深夜（22-2，原"凌晨"改名）+ 凌晨（2-8）双折叠区
   const [late, setLate] = useState(false);   // 深夜 22-2（+4h）
   const [early, setEarly] = useState(false); // 凌晨 2-8（+6h）
+  // 2026-08-11 自动展开：数据加载后若任务落在折叠分组 → 自动展开一次（防止"任务丢失"错觉，
+  // 如 P1 出发时间在凌晨 01:14 → 默认折叠看不到）；用户可手动收起
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current || !tasks.length) return;
+    autoOpened.current = true;
+    const hasLate = tasks.some((t) => {
+      const h = new Date(t.departureAt || t.startTime).getHours();
+      return h >= 22 || (h >= 0 && h < 2);
+    });
+    const hasEarly = tasks.some((t) => {
+      const h = new Date(t.departureAt || t.startTime).getHours();
+      return h >= 2 && h < 8;
+    });
+    if (hasLate) setLate(true);
+    if (hasEarly) setEarly(true);
+  }, [tasks]);
   const [dragOverDay, setDragOverDay] = useState<number | null>(null);
   // 修复：实时时间线用 state 驱动，每分钟刷新（原来 render 时取一次，红线静止）
   const [now, setNow] = useState(() => new Date());
@@ -252,7 +269,8 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     const t = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(t);
   }, []);
-  const totalHours = TH + (late ? 4 : 0) + (early ? 6 : 0); // 8-22 + 深夜22-2 + 凌晨2-8 = 24h 全
+  const totalHours = TH + (late ? 4 : 0) + (early ? 6 : 0); // 白天8-22 + 深夜22-2 + 凌晨2-8 = 24h 全
+  const S_eff = S - (early ? 6 : 0); // 轴起点：凌晨展开 → 2:00（凌晨在 8:00 之前）
   const totalPx = totalHours * H;
   const todayIdx = dayIndex(now);
   const isThisWeek = weekOffset === 0;
@@ -262,7 +280,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     : null;
   const visibleDays = focus ? [0, 1, 2] : [0, 1, 2, 3, 4, 5, 6];
   const hours: number[] = [];
-  for (let h = S; h < S + totalHours; h++) hours.push(h);
+  for (let h = S_eff; h < S_eff + totalHours; h++) hours.push(h);
   // 聚焦说明条（设计稿 .fn）
   const fDays = focusDates
     ? focusDates.map((dt) => DAYS[dayIndex(dt)])
@@ -320,13 +338,20 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         })}
       </div>
 
+      {/* 凌晨折叠（顶部 · 8:00 之前——2026-08-11 用户要求按钮放早上八点那边） */}
+      <div className="flex justify-center">
+        <button onClick={() => setEarly((m) => !m)} className="w-full text-center py-1.5 min-h-[36px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
+          {early ? "收起凌晨 ▲" : "展开凌晨 02:00 - 08:00 ▼"}
+        </button>
+      </div>
+
       {/* 日历主体（设计稿 .cb：pcol 时段标签列 + tcol 时间列 + 天列） */}
       <div className="flex">
         {/* 时段标签列（设计稿 .pcol：36px 竖排双字 · 无圆角铺满） */}
         <div className="plan-week-pcol w-9 shrink-0 relative" style={{ height: totalPx }}>
-          {PS.filter((p) => p.s < S + totalHours && p.e > S).map((p) => {
-            const top = Math.max(0, (p.s - S) * H);
-            const hh = (Math.min(p.e, S + totalHours) - Math.max(p.s, S)) * H;
+          {PS.filter((p) => p.s < S_eff + totalHours && p.e > S_eff).map((p) => {
+            const top = Math.max(0, (p.s - S_eff) * H);
+            const hh = (Math.min(p.e, S_eff + totalHours) - Math.max(p.s, S_eff)) * H;
             if (hh <= 0) return null;
             return (
               <div key={p.s} className="absolute left-0 right-0 flex items-center justify-center" style={{ top, height: hh, background: p.bg, color: p.tx }}>
@@ -341,20 +366,23 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
 
         {/* 时间列（设计稿 .tcol：60px · 标签左对齐 · 段边界 1.5px 加深线） */}
         <div className="plan-week-tcol w-[60px] shrink-0 relative border-r border-[var(--v2-border)]" style={{ height: totalPx }}>
-          {[...hours, S + totalHours].map((h) => (
-            <span key={h} className="absolute -translate-y-1/2 text-[13px] font-semibold text-[var(--v2-text2)] tabular-nums z-[1]" style={{ top: (h - S) * H, left: 6, background: "var(--v2-card)", padding: "0 3px" }}>
+          {[...hours, S_eff + totalHours].map((h) => (
+            <span key={h} className="absolute -translate-y-1/2 text-[13px] font-semibold text-[var(--v2-text2)] tabular-nums z-[1]" style={{ top: (h - S_eff) * H, left: 6, background: "var(--v2-card)", padding: "0 3px" }}>
               {String(h % 24).padStart(2, "0")}:00
             </span>
           ))}
           {hours.map((h) => (
-            <div key={`ln${h}`} className="absolute left-0 right-0" style={{ top: (h - S) * H + H, height: PS.some((p) => p.s === h + 1) ? 1.5 : 0.5, background: PS.some((p) => p.s === h + 1) ? "#d1d5db" : "var(--v2-border)" }} />
+            <div key={`ln${h}`} className="absolute left-0 right-0" style={{ top: (h - S_eff) * H + H, height: PS.some((p) => p.s === h + 1) ? 1.5 : 0.5, background: PS.some((p) => p.s === h + 1) ? "#d1d5db" : "var(--v2-border)" }} />
           ))}
         </div>
 
         {/* 天列（设计稿 .dc：今天 bg #fafafe · 时段背景 0.4 · 网格线 .5px / 段边界 1.5px） */}
         {visibleDays.map((d, i) => {
           const isTodayCell = focusDates ? i === 0 : isThisWeek && d === todayIdx;
-          const dayTasks = tasks.filter((t) => focusDates ? localDateStr(new Date(t.startTime)) === localDateStr(focusDates[i]) : visualDayIdx(t.startTime, weekStart) === d);
+          // 2026-08-11 归天修复：已完成任务用实际开始时间（departureAt）归天——P1 排期在次日凌晨
+          // （折叠区）但实际在当天白天 → 原用排期归天导致"丢失"；统一按实际时段归属
+          const dayKey = (t: SchedTask) => (t.status === "completed" && t.departureAt ? t.departureAt : t.startTime);
+          const dayTasks = tasks.filter((t) => focusDates ? localDateStr(new Date(dayKey(t))) === localDateStr(focusDates[i]) : visualDayIdx(dayKey(t), weekStart) === d);
           return (
             <div key={d} className={`plan-week-col flex-1 relative border-l ${isTodayCell ? "bg-[#fafafe]" : ""} ${dragOverDay === d ? "ring-2 ring-inset ring-[var(--v2-brand)]/40" : ""}`} style={{ height: totalPx, borderColor: "var(--v2-border)", minWidth: focus ? 140 : 130 }}
               onDragOver={(e) => {
@@ -373,20 +401,20 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 // 精确时间：根据鼠标在列内的 Y 坐标计算目标小时（半小时间隔）
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 const rawHour = S + (e.clientY - rect.top) / H;
-                const hour = Math.min(S + totalHours - 0.5, Math.max(S, Math.round(rawHour * 2) / 2));
+                const hour = Math.min(S_eff + totalHours - 0.5, Math.max(S_eff, Math.round(rawHour * 2) / 2));
                 onDropTask?.(d, taskId, hour);
               }}>
               {/* 时段分区背景（设计稿 .bgp opacity 0.4，淡化避免与任务块糊色） */}
-              {PS.filter((p) => p.s < S + totalHours && p.e > S).map((p) => {
-                const top = Math.max(0, (p.s - S) * H);
-                const hh = (Math.min(p.e, S + totalHours) - Math.max(p.s, S)) * H;
+              {PS.filter((p) => p.s < S_eff + totalHours && p.e > S_eff).map((p) => {
+                const top = Math.max(0, (p.s - S_eff) * H);
+                const hh = (Math.min(p.e, S_eff + totalHours) - Math.max(p.s, S_eff)) * H;
                 return hh > 0 ? <div key={p.s} className="absolute left-0 right-0" style={{ top, height: hh, background: p.bg, opacity: 0.45 }} /> : null;
               })}
               {/* 小时网格线（设计稿 .grl：0.5px / 段边界 .grl.ps：1.5px #d1d5db） */}
               {hours.map((h) => (
-                <div key={h} className="absolute left-0 right-0" style={{ top: (h - S) * H, height: PS.some((p) => p.s === h) ? 1.5 : 0.5, background: PS.some((p) => p.s === h) ? "#d1d5db" : "var(--v2-border)" }} />
+                <div key={h} className="absolute left-0 right-0" style={{ top: (h - S_eff) * H, height: PS.some((p) => p.s === h) ? 1.5 : 0.5, background: PS.some((p) => p.s === h) ? "#d1d5db" : "var(--v2-border)" }} />
               ))}
-              <div className="absolute left-0 right-0" style={{ top: totalPx, height: PS.some((p) => p.s === S + totalHours) ? 1.5 : 0.5, background: PS.some((p) => p.s === S + totalHours) ? "#d1d5db" : "var(--v2-border)" }} />
+              <div className="absolute left-0 right-0" style={{ top: totalPx, height: PS.some((p) => p.s === S_eff + totalHours) ? 1.5 : 0.5, background: PS.some((p) => p.s === S_eff + totalHours) ? "#d1d5db" : "var(--v2-border)" }} />
 
               {/* 任务块（设计稿 .tsk：left/right 4px · border-left 4px 分类色 · 0 6px 6px 3px 左直右圆 · 内容分级标题→时间≥46px→时长≥32px→角标 · V3：标题旁主题徽章 + 重叠轨道分列） */}
               {(() => {
@@ -442,8 +470,8 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     const segEndMs = Math.min(cut, t1ms);
                     const sV = visualHour(cur.toISOString());
                     const eh = new Date(segEndMs).getHours();
-                    // 段结束在 2/8 点边界 → 作为前一段（深夜/凌晨）的结束，视觉 = 边界+24
-                    const eV = (eh === 2 || eh === 8) ? eh + 24 : visualHour(new Date(segEndMs).toISOString());
+                    // 段结束在 2 点 → 深夜段结束（深夜区底部延伸 22-26 的末尾）；8 点 → 凌晨段结束（顶部正常 8）
+                    const eV = eh === 2 ? 26 : visualHour(new Date(segEndMs).toISOString());
                     splitSegs.push({ s: sV, e: eV, len: (segEndMs - cur.getTime()) / 3600000 });
                     cur = new Date(segEndMs);
                   }
@@ -457,13 +485,15 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const visibleSeg = (g: { s: number; e: number }) =>
                     (g.s >= S && g.e <= S + TH) ||
                     (late && g.s >= S + TH && g.e <= S + TH + 4) ||
-                    (early && g.s >= S + TH + 4 && g.e <= axisEndH);
+                    (early && g.s >= S - 6 && g.e <= S); // 凌晨区在顶部（2-8）
                   const segs = mergedSegs.filter((g) => g.e > g.s && visibleSeg(g));
                   const foldedTip = splitSegs.some((g) => g.e > g.s && !visibleSeg(g)); // 有段落在折叠分组
                   return segs.map((seg, si) => {
-                    const top = (seg.s - S) * H;
+                    const top = (seg.s - S_eff) * H;
                     const hh = Math.max((seg.e - seg.s) * H, 22);
-                    const isNightSeg = seg.s >= S + TH; // 深夜/凌晨段
+                    const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
+                    const isLateSeg = seg.s >= S + TH;       // 深夜段（底部 22-2）
+                    const isNightSeg = isEarlySeg || isLateSeg;
                     return (
                       <div key={`${t.id}:${si}`} className="plan-tsk absolute cursor-pointer hover:shadow-sm transition-shadow z-[1] overflow-hidden"
                         style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: focus ? "8px 10px" : "7px 8px" }}
@@ -474,7 +504,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                         {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
                         {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
                         {/* 深夜/凌晨段标记（跨段任务的段归属提示） */}
-                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: 4, zIndex: 1 }}>{seg.s >= S + TH + 4 ? "凌晨" : "深夜"}</span>}
+                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
                         {/* 标题：2026-08-10 多行换行（原单行 nowrap 截断——高卡片大量空白却只显示一行）；
                             按卡高自适应：高卡最多 3 行、矮卡 2 行，充分利用卡片空间显示完整名字 */}
                         <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (t.source === "ai" || isNightSeg) ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
@@ -506,10 +536,10 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
               {/* 聚焦模式 + 本周：今天实时时间线（设计稿 .nl/.nd/.nlb：粉色呼吸 + 圆点 + 白底时间标签） */}
               {focus && isThisWeek && isTodayCell && (() => {
                 const nh = now.getHours() + now.getMinutes() / 60;
-                if (nh < S || nh > S + totalHours) return null;
+                if (nh < S_eff || nh > S_eff + totalHours) return null;
                 return (
                   <>
-                    <div className="absolute left-0 right-0 animate-pulse z-[2]" style={{ top: (nh - S) * H, height: 1, background: "#ec4899" }} />
+                    <div className="absolute left-0 right-0 animate-pulse z-[2]" style={{ top: (nh - S_eff) * H, height: 1, background: "#ec4899" }} />
                     <span className="absolute z-[2] animate-pulse" style={{ left: -4, top: (nh - S) * H, transform: "translate(-50%,-50%)", width: 8, height: 8, borderRadius: "50%", background: "#ec4899" }} />
                     <span className="absolute z-[2] animate-pulse" style={{ right: 2, top: (nh - S) * H, transform: "translateY(-50%)", fontSize: 11, color: "#ec4899", fontWeight: 500, background: "#fff", padding: "0 3px" }}>
                       {String(now.getHours()).padStart(2, "0")}:{String(now.getMinutes()).padStart(2, "0")}
@@ -522,21 +552,12 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
         })}
       </div>
 
-      {/* 深夜/凌晨折叠（2026-08-11：双分组可独立展开） */}
+      {/* 深夜折叠（底部） */}
       <div className="flex justify-center mt-1">
         <button onClick={() => setLate((m) => !m)} className="w-full text-center py-2 min-h-[40px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
           {late ? "收起深夜 ▲" : "展开深夜 22:00 - 02:00 ▼"}
         </button>
       </div>
-      <div className="flex justify-center">
-        <button onClick={() => setEarly((m) => !m)} className="w-full text-center py-2 min-h-[40px] text-[12px] text-[var(--v2-text3)] hover:text-[var(--v2-text2)] transition">
-          {early ? "收起凌晨 ▲" : "展开凌晨 02:00 - 08:00 ▼"}
-        </button>
-      </div>
-      {/* 视觉归天提示（跨段任务：深夜+凌晨各一块） */}
-      {(late || early) && (
-        <div className="px-4 pb-1 -mt-1 text-[11px] text-[var(--v2-text3)]/80">凌晨时段任务按实际时间分段显示（跨 22-2 / 2-8 的任务拆成两个时间块）</div>
-      )}
 
       {/* 分类行（设计稿 .tp：左色条标签 + 任务统计 · V3：补主题徽章） */}
       <div className="flex gap-2 flex-wrap items-center mt-2 pt-2.5 pb-2.5 px-3.5 border-t border-[var(--v2-border)]">

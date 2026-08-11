@@ -1205,26 +1205,41 @@ function ScheduleModalInner({ target, busy, onSave, onClose }: {
     }
     return toLocalInput(new Date(Date.now() + 90 * 60000));
   });
+  // 2026-08-11 修复：改开始时间后结束不联动 → end<=start → 后端 400 报错。联动 + 提交前校验提示
+  const [timeErr, setTimeErr] = useState<string | null>(null);
+  const onStartChange = (v: string) => {
+    setStart(v);
+    setTimeErr(null);
+    if (end && new Date(end) <= new Date(v)) {
+      setEnd(toLocalInput(new Date(new Date(v).getTime() + 3600000))); // end 自动跟随 +1h（保持原时长语义）
+    }
+  };
+  const submit = () => {
+    if (!start || !end || isNaN(new Date(start).getTime()) || isNaN(new Date(end).getTime())) { setTimeErr("请填写完整的开始/结束时间"); return; }
+    if (new Date(end) <= new Date(start)) { setTimeErr("结束时间必须晚于开始时间"); return; }
+    onSave(target.taskId, new Date(start).toISOString(), new Date(end).toISOString());
+  };
 
   return (
     <>
       <div className="space-y-2.5">
         <div>
           <label className="text-sm text-[var(--v2-text3)] block mb-1">开始时间</label>
-          <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)}
+          <input type="datetime-local" value={start} onChange={(e) => onStartChange(e.target.value)}
             className="w-full px-2.5 py-1.5 text-sm border border-[var(--v2-border)] rounded outline-none focus:border-[var(--v2-brand)]" />
         </div>
         <div>
           <label className="text-sm text-[var(--v2-text3)] block mb-1">结束时间</label>
-          <input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)}
+          <input type="datetime-local" value={end} onChange={(e) => { setEnd(e.target.value); setTimeErr(null); }}
             className="w-full px-2.5 py-1.5 text-sm border border-[var(--v2-border)] rounded outline-none focus:border-[var(--v2-brand)]" />
         </div>
       </div>
+      {timeErr && <div className="text-[12px] text-[#b91c1c] mt-1.5">{timeErr}</div>}
       <div className="flex justify-end gap-2 mt-4">
         <button onClick={onClose} className="px-3 py-1.5 text-sm rounded border border-[var(--v2-border)] bg-white text-[var(--v2-text2)] hover:bg-[var(--color-gray-50)] transition">取消</button>
         {/* 时区根治：datetime-local 是本地无时区值，必须转 UTC ISO 再提交，
             否则后端按服务器时区（Vercel=UTC）解析 → 9 点被存成 UTC 9 点 → 显示 17 点/20 点 */}
-        <button onClick={() => onSave(target.taskId, new Date(start).toISOString(), new Date(end).toISOString())} disabled={busy || !start || !end}
+        <button onClick={submit} disabled={busy}
           className="px-3.5 py-1.5 text-sm font-medium rounded bg-[var(--v2-brand)] text-white hover:bg-[var(--v2-brand-deep)] transition disabled:opacity-50">
           {busy ? "保存中…" : "排入计划"}
         </button>

@@ -14,6 +14,8 @@ export interface TimelineItem {
   end: string | null;
   duration: string;
   isCurrent: boolean;
+  /** 2026-08-09：任务状态（今日路线保留已完成任务展示，前端据此显示"已完成"而非"进行中"） */
+  status: string;
 }
 
 /** Get planned minutes from the latest Schedule only (defensive: single, not sum) */
@@ -56,16 +58,25 @@ export async function getCompletionPercent(taskId: string): Promise<number> {
 /** 生成今日时间轴 */
 export async function getTodayTimeline(userId: string): Promise<TimelineItem[]> {
   const now = new Date();
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+  // 2026-08-12 日界对齐 plan：凌晨 2:00 = 新的一天开始（深夜 22-2 归前一天、凌晨 2-8 归当天）。
+  // 今日路线 = 排期覆盖 [今天 2:00, 明天 2:00) 的任务——跨夜任务（如 8/11 21:20 → 8/12 02:40）
+  // 的凌晨部分归今天，今日路线应显示（原按 scheduledStart 0:00 起算被排除）
+  const dayStart = new Date(); dayStart.setHours(2, 0, 0, 0);
+  const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
 
+  // 2026-08-09：今日路线保留已完成任务（排期是既定事实，完成的任务也应展示）；
+  // 任务状态随 timeline 返回，前端据此显示"已完成"而非"进行中"（不再用过滤掩盖）。
   const schedules = await prisma.schedule.findMany({
-    where: { userId, scheduledStart: { gte: today, lt: tomorrow } },
+    where: {
+      userId,
+      scheduledStart: { lt: dayEnd },
+      OR: [{ scheduledEnd: { gt: dayStart } }, { scheduledEnd: null }],
+    },
     orderBy: { scheduledStart: "asc" },
-    include: { task: { select: { title: true } } },
+    include: { task: { select: { title: true, status: true } } },
   });
 
-  return schedules.map(s => ({
+  return schedules.filter((s) => s.task).map(s => ({
     taskId: s.taskId,
     title: s.task.title,
     start: s.scheduledStart.toISOString(),
@@ -74,5 +85,6 @@ export async function getTodayTimeline(userId: string): Promise<TimelineItem[]> 
       ? `${Math.max(0, Math.round((s.scheduledEnd.getTime() - s.scheduledStart.getTime()) / 60000))}分钟`
       : "—",
     isCurrent: s.scheduledStart <= now && (!s.scheduledEnd || s.scheduledEnd >= now),
+    status: s.task.status,
   }));
 }

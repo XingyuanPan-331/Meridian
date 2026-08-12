@@ -519,8 +519,9 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const dlShort = t.deadline ? (() => { const dl = new Date(t.deadline); return `${dl.getMonth() + 1}/${dl.getDate()}`; })() : null;
                   const hasBadge = t.source === "ai" || dlLabel;
                   const laneInfo = lanes[ti];
-                  const laneLeft = laneInfo.count > 1 ? `calc(${(laneInfo.lane * 100) / laneInfo.count}% + 2px)` : 4;
-                  const laneRight = laneInfo.count > 1 ? `calc(${100 - (100 / laneInfo.count) * (laneInfo.lane + 1)}% + 2px)` : 4;
+                  // 2026-08-13 连排块视觉空开：lane 间隙 +2px → +3px（相邻任务块不糊在一起）
+                  const laneLeft = laneInfo.count > 1 ? `calc(${(laneInfo.lane * 100) / laneInfo.count}% + 3px)` : 4;
+                  const laneRight = laneInfo.count > 1 ? `calc(${100 - (100 / laneInfo.count) * (laneInfo.lane + 1)}% + 3px)` : 4;
                   // 2026-08-11 段级归天：段在 segCache 预计算（按段开始时刻归天）；
                   // 此处仅取"归天==当前列"的段 + 折叠过滤
                   // 2026-08-12 可见性：段与展开后轴 [S_eff, S_eff+totalHours] 有交集即可见；
@@ -561,7 +562,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                             overflow: "hidden", wordBreak: "break-word",
                           }}>{t.title}</div>
                           {/* 2026-08-13 段序号放标题后（不截断）——多段任务 (1)(2) 标识 */}
-                          {seg.si ? <span className="text-[11px] text-[var(--v2-text3)] shrink-0 font-medium">{`(${seg.si})`}</span> : null}
+                          {seg.si ? <span className="text-[13px] text-[var(--v2-text2)] shrink-0 font-semibold leading-none mt-px">{`(${seg.si})`}</span> : null}
                           {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
                         {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}

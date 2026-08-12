@@ -50,13 +50,12 @@ export async function GET(
   });
   if (!task) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
 
-  // V3 C7：聚合附加数据（并行）+ FCV2：purpose 继承值 + 2026-08-10 实际投入（elapsedMinutes）
-  const [ancestors, schedules, accumStats, purpose, timeLogAgg] = await Promise.all([
+  // V3 C7：聚合附加数据（并行）+ FCV2：purpose 继承值
+  const [ancestors, schedules, accumStats, purpose] = await Promise.all([
     buildAncestors(session.user.id, task.parentId),
     prisma.schedule.findMany({ where: { taskId: id, userId: session.user.id }, orderBy: { scheduledStart: "asc" } }),
     task.accumulate ? getAccumStats(session.user.id, id).catch(() => null) : null,
     resolvePurpose(session.user.id, task),
-    prisma.timeLog.aggregate({ where: { taskId: id }, _sum: { durationSeconds: true } }),
   ]);
 
   // 只读 AI 增强字段（V3 §4.5 红线：仅档案可见）
@@ -69,19 +68,11 @@ export async function GET(
 
   return NextResponse.json({
     ...task,
-    // 2026-08-10 勾选修复：children 派生 text/done（toCardV2 前置卡 items 依赖 done；
-    // Prisma 原始对象仅 title/completedAt → 勾选状态丢失）。保留原始字段不破坏档案面板消费。
-    children: task.children.map((c) => ({ ...c, text: c.title, done: !!c.completedAt })),
     theme: task.theme ?? null,
     purpose,
     departureAt: task.departureAt?.toISOString() ?? null,
-    // 2026-08-10 实际投入（TimeLog 聚合）——前置卡"已用/总耗时"依赖；此前接口未返回 → 完成卡显示"无"
-    elapsedMinutes: Math.round((timeLogAgg._sum.durationSeconds ?? 0) / 60),
-    // 2026-08-10 归属修复：派生 parentTitle（标题链）——前端 toCardV2 的"所属项目"依赖此字段，
-    // 此前接口未返回 → 今日路线点击的前置卡恒显"无归属"
-    parentTitle: ancestors.length ? ancestors.join(" / ") : null,
     ancestors,
-    schedules: schedules.map(s => ({ id: s.id, scheduledStart: s.scheduledStart.toISOString(), scheduledEnd: s.scheduledEnd?.toISOString() ?? null, source: s.source, departureAt: s.departureAt?.toISOString() ?? null, completedAt: s.completedAt?.toISOString() ?? null })), // 2026-08-12 块级出发/完成状态
+    schedules: schedules.map(s => ({ id: s.id, scheduledStart: s.scheduledStart.toISOString(), scheduledEnd: s.scheduledEnd?.toISOString() ?? null, source: s.source })),
     accumStats,
     aiFields,
   });
@@ -166,17 +157,6 @@ export async function PUT(
         data.departureAt = d;
       }
     }
-    // 计时模型 V2：completedAt 完成时刻补录/修改（null/空 清除）。
-    // 分配时间段 = completedAt − departureAt 派生；实际投入 = TimeLog 聚合（独立），互不影响。
-    if (body.completedAt !== undefined) {
-      if (body.completedAt === null || body.completedAt === "") {
-        data.completedAt = null;
-      } else {
-        const d = new Date(body.completedAt);
-        if (isNaN(d.getTime())) return badRequest("completedAt 需为合法时间或 null");
-        data.completedAt = d;
-      }
-    }
     // V5：层级语义 + 积累型标记（白名单）
     if (body.level !== undefined) {
       if (!["project", "phase", "task"].includes(body.level)) return badRequest("level 需为 project/phase/task");
@@ -211,27 +191,6 @@ export async function PUT(
       where: { id }, data,
       include: { children: true },
     });
-
-    // 2026-08-10 属性同步：project/phase 级（有子级）改领域/主题 → 子树跟随（项目属性统一性）。
-    // 用户反馈：改主项目后子阶段没同步；P3-P9 无属性。
-    if ((data.category !== undefined || data.theme !== undefined) && task.children.length > 0) {
-      try {
-        // 递归收集子树 ids（多级：phase → task → 清单项）
-        const collect = async (ids: string[]): Promise<string[]> => {
-          if (ids.length === 0) return [];
-          const kids = await prisma.task.findMany({ where: { parentId: { in: ids } }, select: { id: true } });
-          const kidIds = kids.map((k) => k.id);
-          return [...kidIds, ...(await collect(kidIds))];
-        };
-        const descendantIds = await collect([id]);
-        if (descendantIds.length > 0) {
-          const sync: { category?: string | null; theme?: string | null; themeColor?: string | null } = {};
-          if (data.category !== undefined) sync.category = data.category as string | null;
-          if (data.theme !== undefined) { sync.theme = data.theme as string | null; sync.themeColor = (data.themeColor as string | null) ?? null; }
-          await prisma.task.updateMany({ where: { id: { in: descendantIds } }, data: sync });
-        }
-      } catch (e) { console.error("[tasks PUT] 子树属性同步失败:", e); }
-    }
 
     // V3 D2 + FCV2：领域/主题/动机修改 → AgentFeedback 回流（计入 trustScore；档案面板编辑也触发）
     if (data.category !== undefined || data.theme !== undefined || data.purpose !== undefined) {
@@ -296,8 +255,9 @@ export async function DELETE(
 
   const existing = await prisma.task.findFirst({ where: { id, userId: session.user.id } });
   if (!existing) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
-  // 2026-08-09：放开"已完成任务不可删除"——Project 页提供「移除已完成清单」入口
-  // （原产品理念为成长记录永久保留，但用户明确要求可移除已完成清单 → 用户最终控制权）
+  if (existing.status === "completed") {
+    return badRequest("已完成的任务不可删除（成长记录永久保留）");
+  }
 
   // BUG-20260808-054（原 BUG-051）：递归收集全部子孙（多级），显式级联删除——
   // 数据库外键级联不可靠（实测父删子孙残留为孤儿 → 孤儿子任务混入 mustDo 抢占主卡）。

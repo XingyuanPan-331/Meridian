@@ -264,6 +264,24 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     return Math.min(...cands);
   };
   const segCache = useMemo(() => {
+    // 2026-08-13 排期序号：同任务多条排期（添加时段/多段）按开始时间排序标 (1)(2)——新添加时段
+    // 的任务即使无执行段也显示序号
+    const schedOrder = new Map<string, Map<string, number>>();
+    {
+      const byTask = new Map<string, { scheduleId: string; start: number }[]>();
+      for (const t of tasks) {
+        const arr = byTask.get(t.id) ?? [];
+        arr.push({ scheduleId: t.scheduleId ?? "0", start: new Date(t.startTime).getTime() });
+        byTask.set(t.id, arr);
+      }
+      for (const [tid, arr] of byTask) {
+        if (arr.length < 2) continue; // 单排期不标序号
+        arr.sort((a, b) => a.start - b.start);
+        const idxMap = new Map<string, number>();
+        arr.forEach((x, i) => idxMap.set(x.scheduleId, i + 1));
+        schedOrder.set(tid, idxMap);
+      }
+    }
     // 2026-08-13 段对象扩展 si（多段序号）/ st/et（段自身时段，块标题显示）
     const m = new Map<string, { day: string; s: number; e: number; len: number; st?: string; et?: string; si?: number }[]>();
     for (const t of tasks) {
@@ -285,6 +303,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
       const sT = t as SchedTask;
       const bs = sT.schedDepartureAt ?? (t.status === "completed" && t.departureAt ? t.departureAt : t.startTime);
       const be = sT.schedCompletedAt ?? (t.status === "completed" && t.completedAt ? t.completedAt : t.endTime);
+      const schedIdx = schedOrder.get(t.id)?.get(t.scheduleId ?? "0"); // 多排期序号（无执行段时也标）
       const startDate = new Date(bs);
       const endDate = be ? new Date(be) : new Date(startDate.getTime() + durHours(t) * 3600000);
       const t1ms = endDate.getTime();
@@ -314,7 +333,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
       for (const g of segs) {
         const last = merged[merged.length - 1];
         if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day) { last.e = g.e; last.len += g.len; }
-        else merged.push({ ...g });
+        else merged.push({ ...g, si: (g as { si?: number }).si ?? schedIdx });
       }
       m.set(t.id + ":" + (t.scheduleId ?? "0"), merged); // 2026-08-12 同任务多排期（添加时段）：key 带 scheduleId 区分
     }
@@ -535,8 +554,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     const vE = Math.min(seg.e, axisBottom);
                     if (vE <= vS) return null;
                     const top = (vS - S_eff) * H;
-                    // 2026-08-13 垂直空开：块高减 2px（相邻时间块之间出现 2px 缝隙，上下相接不糊）
-                    const hh = Math.max((vE - vS) * H - 2, 20);
+                    const hh = Math.max((vE - vS) * H, 22);
                     // 2026-08-13 多段块：时长角标用段时长（块1 1h、块2 2h——非任务级总时长）
                     const dsSeg = seg.len !== undefined ? (seg.len >= 1 ? `${Math.floor(seg.len)}h` : `${Math.round(seg.len * 60)}m`) : ds;
                     const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
@@ -563,7 +581,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                             overflow: "hidden", wordBreak: "break-word",
                           }}>{t.title}</div>
                           {/* 2026-08-13 段序号放标题后（不截断）——多段任务 (1)(2) 标识 */}
-                          {seg.si ? <span className="text-[13px] text-[var(--v2-text2)] shrink-0 font-semibold leading-none mt-px">{`(${seg.si})`}</span> : null}
+                          {seg.si ? <span className="text-[12px] text-[var(--v2-text2)] shrink-0 font-semibold leading-none mt-px">{`(${seg.si})`}</span> : null}
                           {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
                         {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}

@@ -264,16 +264,18 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
     return Math.min(...cands);
   };
   const segCache = useMemo(() => {
-    const m = new Map<string, { day: string; s: number; e: number; len: number }[]>();
+    // 2026-08-13 段对象扩展 si（多段序号）/ st/et（段自身时段，块标题显示）
+    const m = new Map<string, { day: string; s: number; e: number; len: number; st?: string; et?: string; si?: number }[]>();
     for (const t of tasks) {
       // 2026-08-12 多段执行（暂停分段 ≥2 段）：直接用执行段渲染多块（每段 出发→结束——
       // "暂停超过半小时 = 做了两次，plan 显示两段一样的卡片"）
       const segArr = (t as SchedTask).segments ?? [];
       if (segArr.length >= 2) {
-        const multi = segArr.map((seg) => {
+        // 2026-08-13 段对象带 st/et（原始时段，块标题显示各自时段）+ si（序号 1/2…）
+        const multi = segArr.map((seg, i) => {
           const st = new Date(seg.startedAt), en = new Date(seg.endedAt);
           const { displayDate } = realTimeToVisualTime(localDateStr(st), st.getHours());
-          return { day: displayDate, s: visualHour(seg.startedAt), e: visualHour(seg.endedAt), len: seg.durationSeconds / 3600 };
+          return { day: displayDate, s: visualHour(seg.startedAt), e: visualHour(seg.endedAt), len: seg.durationSeconds / 3600, st: seg.startedAt, et: seg.endedAt, si: i + 1 };
         });
         m.set(t.id + ":" + (t.scheduleId ?? "0"), multi);
         continue;
@@ -308,7 +310,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
       // 同视觉区相邻段合并（如 23:37-24 + 0-2 都在深夜区 → 1 块；21-22 主轴 + 22-01:20 深夜
       // 同列视觉连续 → 1 块，不再重复显示任务信息）；跨天段（day 不同）不合并（深夜段归 22 点那天、
       // 凌晨段归正常一天——段级归天语义）
-      const merged: { day: string; s: number; e: number; len: number }[] = [];
+      const merged: { day: string; s: number; e: number; len: number; st?: string; et?: string; si?: number }[] = [];
       for (const g of segs) {
         const last = merged[merged.length - 1];
         if (last && Math.abs(last.e - g.s) < 0.001 && last.day === g.day) { last.e = g.e; last.len += g.len; }
@@ -498,6 +500,13 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   const st = new Date(blockStart);
                   const sh = visualHour(blockStart);
                   const dur = blockDur;
+                  // 2026-08-13 多段块（暂停分段）：标题时间用段自身时段（块1 17-18、块2 19:58-结束），
+                  // 不再都显示任务级 17:00-21:56
+                  const segTm = (segAny: { st?: string; et?: string }) => {
+                    if (!segAny.st || !segAny.et) return null;
+                    const f = (d: string) => { const x = new Date(d); return `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`; };
+                    return `${f(segAny.st)} - ${f(segAny.et)}`;
+                  };
                   // B6 修复：未展开凌晨时跨夜任务块（如 23:00-01:00）截断到时间轴末端，不再溢出被裁剪
                   const axisEndH = S + totalHours;
                   const cs = catStyle(t.category);
@@ -526,6 +535,8 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     if (vE <= vS) return null;
                     const top = (vS - S_eff) * H;
                     const hh = Math.max((vE - vS) * H, 22);
+                    // 2026-08-13 多段块：时长角标用段时长（块1 1h、块2 2h——非任务级总时长）
+                    const dsSeg = seg.len !== undefined ? (seg.len >= 1 ? `${Math.floor(seg.len)}h` : `${Math.round(seg.len * 60)}m`) : ds;
                     const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
                     const isLateSeg = seg.s >= S + TH;       // 深夜段（底部 22-2）
                     const isNightSeg = isEarlySeg || isLateSeg;
@@ -535,7 +546,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                         draggable
                         onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.effectAllowed = "copyMove"; }}
                         onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
-                        title={`${t.title}\n${tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
+                        title={`${seg.si ? `(${seg.si}) ` : ""}${t.title}\n${segTm(seg) ?? tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
                         {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
                         {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
                         {/* 深夜/凌晨段标记（跨段任务的段归属提示） */}
@@ -548,18 +559,19 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                             display: "-webkit-box", WebkitBoxOrient: "vertical",
                             WebkitLineClamp: hh >= 60 ? 3 : 2,
                             overflow: "hidden", wordBreak: "break-word",
-                          }}>{t.title}</div>
+                          }}>{seg.si ? `(${seg.si}) ${t.title}` : t.title}</div>
                           {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
                         {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}
                         {hh >= 46 && (
                           <div className="flex items-center justify-between gap-2 text-[13px] text-[var(--v2-text2)] tabular-nums mt-1 min-w-0">
-                            <span className="truncate">{tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}截止</span>}</span>
-                            <span className="shrink-0">{ds}</span>
+                            {/* 2026-08-13 多段块：显示段自身时段（块1 17:00-18:00、块2 19:58-21:56） */}
+                            <span className="truncate">{segTm(seg) ?? tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}截止</span>}</span>
+                            <span className="shrink-0">{dsSeg}</span>
                           </div>
                         )}
                         {/* 时长角标（中矮块 32-46px：无时间行，右下角独立显示） */}
-                        {hh >= 32 && hh < 46 && <div className="absolute right-1.5 text-[13px] text-[var(--v2-text2)]" style={{ bottom: 4 }}>{ds}</div>}
+                        {hh >= 32 && hh < 46 && <div className="absolute right-1.5 text-[13px] text-[var(--v2-text2)]" style={{ bottom: 4 }}>{dsSeg}</div>}
                         {/* B6：截断提示（跨夜/折叠分组） */}
                         {si === segs.length - 1 && foldedTip && <div className="absolute right-1.5 bottom-0.5 text-[11px] font-semibold text-[var(--v2-text3)]" style={{ background: cs.bg, padding: "0 3px" }}>⋯ 折叠区</div>}
                       </div>

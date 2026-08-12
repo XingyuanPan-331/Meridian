@@ -69,14 +69,17 @@ export async function deletePlanItem(userId: string, taskId: string) {
  * 统一去重规则：同任务 + 同自然日 → 保留最新一条排期（修复 P1-1：三处实现不一致）
  * week-calendar / task-execution-state 复用本函数，保证周历、日计划、执行状态显示一致
  */
-export function deduplicateByDay<T extends { taskId: string; scheduledStart: Date }>(entries: T[]): T[] {
+export function deduplicateByDay<T extends { taskId: string; scheduledStart: Date; scheduledEnd?: Date | null }>(entries: T[]): T[] {
+  // 2026-08-13 修复：添加时段（二次排期）被误去重——同任务同天多条排期（有意多段执行）只留最晚，
+  // 旧块消失（用户 P2 添加 (2) 后原块被'移动'）。改为仅完全重复（同任务+同天+同起止时刻）才去重；
+  // 同天不同时段全部保留（多段执行语义），重复由后端 moveSchedule（替换/清重复）保证。
   const seen = new Map<string, number>();
   const result: T[] = [];
   for (const e of entries) {
-    const key = localDateStr(e.scheduledStart) + "_" + e.taskId; // 本地自然日（修复：原实现用 toISOString 精确时间）
+    const key = localDateStr(e.scheduledStart) + "_" + e.taskId + "_" + e.scheduledStart.getTime() + "_" + (e.scheduledEnd?.getTime() ?? 0);
     const idx = seen.get(key);
-    if (idx !== undefined && e.scheduledStart > result[idx].scheduledStart) result[idx] = e;
-    else if (idx === undefined) { seen.set(key, result.length); result.push(e); }
+    if (idx !== undefined) { if (e.scheduledStart > result[idx].scheduledStart) result[idx] = e; }
+    else { seen.set(key, result.length); result.push(e); }
   }
   if (result.length !== entries.length) {
     console.warn("[plan] deduped " + (entries.length - result.length) + " duplicate schedules");

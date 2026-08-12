@@ -535,7 +535,8 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     const vE = Math.min(seg.e, axisBottom);
                     if (vE <= vS) return null;
                     const top = (vS - S_eff) * H;
-                    const hh = Math.max((vE - vS) * H, 22);
+                    // 2026-08-13 垂直空开：块高减 2px（相邻时间块之间出现 2px 缝隙，上下相接不糊）
+                    const hh = Math.max((vE - vS) * H - 2, 20);
                     // 2026-08-13 多段块：时长角标用段时长（块1 1h、块2 2h——非任务级总时长）
                     const dsSeg = seg.len !== undefined ? (seg.len >= 1 ? `${Math.floor(seg.len)}h` : `${Math.round(seg.len * 60)}m`) : ds;
                     const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）

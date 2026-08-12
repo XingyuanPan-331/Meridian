@@ -239,7 +239,7 @@ function DeadlineBody({ items }: { items: ReturnType<typeof deadlineStats>["item
 function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDropTask, peakHours, onToggleFocus }: {
   tasks: SchedTask[]; focus: boolean; weekStart: Date; weekOffset: number;
   onTaskClick?: (t: SchedTask, pos?: { x: number; y: number }) => void;
-  onDropTask?: (dayIndex: number, taskId: string, hour?: number) => void;
+  onDropTask?: (dayIndex: number, taskId: string, hour?: number, schedId?: string) => void;
   peakHours?: string[]; onToggleFocus: () => void;
 }) {
   // 2026-08-11 时段重构：深夜（22-2，原"凌晨"改名）+ 凌晨（2-8）双折叠区
@@ -476,6 +476,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 e.preventDefault();
                 setDragOverDay(null);
                 const taskId = e.dataTransfer.getData("text/task-id");
+                const schedId = e.dataTransfer.getData("text/schedule-id") || undefined; // 2026-08-13 拖拽只作用于被选中的块（P2-2 拖 P2-1 错乱根因）
                 if (!taskId) return;
                 // 精确时间：根据鼠标在列内的 Y 坐标计算目标小时（半小时间隔）
                 // 2026-08-11 修复：rawHour 用 S_eff（轴起点）而非 S——凌晨展开后轴从 2:00 起，
@@ -483,7 +484,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 const rawHour = S_eff + (e.clientY - rect.top) / H;
                 const hour = Math.min(S_eff + totalHours - 0.5, Math.max(S_eff, Math.round(rawHour * 2) / 2));
-                onDropTask?.(d, taskId, hour);
+                onDropTask?.(d, taskId, hour, schedId);
               }}>
               {/* 时段分区背景（设计稿 .bgp opacity 0.4，淡化避免与任务块糊色） */}
               {PS.filter((p) => p.s < S_eff + totalHours && p.e > S_eff).map((p) => {
@@ -573,15 +574,15 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                       <div key={`${t.id}:${si}`} className="plan-tsk absolute cursor-pointer hover:shadow-sm transition-shadow z-[1] overflow-hidden"
                         style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: hh < 40 ? (focus ? "3px 6px" : "2px 6px") : (focus ? "8px 10px" : "7px 8px") }}
                         draggable
-                        onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.effectAllowed = "copyMove"; }}
+                        onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.setData("text/schedule-id", t.scheduleId ?? ""); e.dataTransfer.effectAllowed = "copyMove"; }}
                         onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
                         title={`${seg.si ? `(${seg.si}) ` : ""}${t.title}\n${segTm(seg) ?? tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
-                        {/* 2026-08-13 布局优化：序号独立右上角（不占标题位）；AI/深夜标记下移一行 */}
-                        {seg.si && <span className="absolute right-1.5 text-[11px] px-1 py-px rounded font-semibold text-[var(--v2-text2)] bg-white/80" style={{ top: 4, zIndex: 2 }}>{seg.si}</span>}
-                        {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: seg.si ? 20 : 4 }}>AI 建议</span>}
-                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: (seg.si || t.source === "ai") ? 20 : 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
-                        {/* 标题：矮块 1 行、高块 2-3 行；序号在右上角不挤压标题 */}
-                        <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (seg.si || t.source === "ai" || isNightSeg) ? 28 : 0 }}>
+                        {/* 2026-08-13 布局优化：序号独立右下角（不占卡片宽度方向任何空间）；AI/深夜标记右上 */}
+                        {seg.si && <span className="absolute right-1 text-[11px] px-1 py-px rounded font-semibold text-[var(--v2-text2)] bg-white/80" style={{ bottom: 3, zIndex: 2 }}>{seg.si}</span>}
+                        {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
+                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: (t.source === "ai") ? 20 : 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
+                        {/* 标题：矮块 1 行、高块 2-3 行；序号在右下角不占标题宽度 */}
+                        <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (t.source === "ai" || isNightSeg) ? 28 : 0 }}>
                           <div className="plan-tsk-title" style={{
                             fontSize: hh < 40 ? 12.5 : 15, fontWeight: 600, lineHeight: 1.35, color: "#111827",
                             display: "-webkit-box", WebkitBoxOrient: "vertical",
@@ -719,15 +720,15 @@ interface DetailTask {
   children?: { id: string; title: string; status: string; completedAt: string | null; estimatedMinutes: number | null }[];
   timeLogs?: { durationSeconds: number }[];
 }
-type DetailSeed = { taskId: string; title: string; startTime?: string; endTime?: string | null; category?: string | null; estimatedMinutes?: number | null; source?: string | null };
+type DetailSeed = { taskId: string; scheduleId?: string; title: string; startTime?: string; endTime?: string | null; category?: string | null; estimatedMinutes?: number | null; source?: string | null };
 
-function TaskDetailPopover({ seed, pos, onClose, onEditTime, onAppendTime, onRemove, busy, onAction }: {
+function TaskDetailPopover({ seed, pos, onClose, onEditTime, onAppendTime, onRemoveBlock, busy, onAction }: {
   seed: DetailSeed;
   pos: { x: number; y: number } | null;
   onClose: () => void;
   onEditTime: (taskId: string) => void;
   onAppendTime?: (taskId: string) => void;
-  onRemove: (taskId: string) => void;
+  onRemoveBlock?: (taskId: string, scheduleId?: string) => void;
   busy: boolean;
   onAction: (taskId: string, action: string) => Promise<void>;
 }) {
@@ -931,9 +932,9 @@ function TaskDetailPopover({ seed, pos, onClose, onEditTime, onAppendTime, onRem
             添加时段
           </button>
           {seed.startTime && (
-            <button onClick={() => onRemove(seed.taskId)} disabled={busy}
+            <button onClick={() => { if (window.confirm(seed.scheduleId ? "移除该时间块？任务本身保留。" : "从计划中移除该任务？")) { onRemoveBlock?.(seed.taskId, seed.scheduleId); } }} disabled={busy}
               className="px-3 py-2 text-sm rounded-lg border border-[var(--color-danger-border)] bg-white text-[var(--color-danger-text)] hover:bg-[var(--color-danger-bg)] transition disabled:opacity-50">
-              移除
+              {seed.scheduleId ? "移除该块" : "移除"}
             </button>
           )}
         </div>
@@ -1065,7 +1066,7 @@ export default function PlanPage() {
 
   // 拖拽到日历：自动转为时间块（目标日按当前偏移周的 weekStart 计算）
   // hour 传入（任务块拖动，鼠标位置精确计算）；未传入（收集箱拖入）→ 当天 10:00 或下一整点
-  const dropTask = useCallback(async (dayIndex: number, taskId: string, hour?: number) => {
+  const dropTask = useCallback(async (dayIndex: number, taskId: string, hour?: number, schedId?: string) => {
     setBusy(true);
     try {
       const now = new Date();
@@ -1090,7 +1091,7 @@ export default function PlanPage() {
       const r = await fetch("/api/plan/apply-decision", {
         method: "POST", headers: { "Content-Type": "application/json" },
         // 修复 P1-4：拖动已排期任务带 scheduleId，只替换目标那条（防重复任务被折叠清空）
-        body: JSON.stringify({ changes: [{ taskId, newStart: start.toISOString(), newEnd: new Date(start.getTime() + dur * 60000).toISOString(), scheduleId: sched?.scheduleId }] }),
+        body: JSON.stringify({ changes: [{ taskId, newStart: start.toISOString(), newEnd: new Date(start.getTime() + dur * 60000).toISOString(), scheduleId: schedId ?? sched?.scheduleId }] }),
       });
       if (!r.ok) throw new Error("排期失败");
       await syncActualIfCompleted(taskId, sched?.status, start.toISOString(), new Date(start.getTime() + dur * 60000).toISOString());
@@ -1098,6 +1099,18 @@ export default function PlanPage() {
     } catch { setError(true); }
     finally { setBusy(false); }
   }, [ideas, scheduled, load, weekStart]);
+
+  // 2026-08-13 移除单个时间块（只删目标块，不波及其他排期——P2-3 移除连带 P2-1/P2-2 修复）
+  const removeScheduleBlock = useCallback(async (scheduleId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/schedules/${scheduleId}`, { method: "DELETE" });
+      if (!r.ok) throw new Error("移除失败");
+      setDetail(null);
+      await load(true);
+    } catch { setError(true); }
+    finally { setBusy(false); }
+  }, [load]);
 
   // 从计划移除（删 schedule 保留任务）
   const removeSchedule = useCallback(async (taskId: string) => {
@@ -1254,7 +1267,7 @@ export default function PlanPage() {
             setDetail(null);
             setModal({ taskId, title: detail.seed.title, initialStart: undefined, append: true }); // 添加时段：空初始时间 + 追加模式
           }}
-          onRemove={removeSchedule}
+          onRemoveBlock={(taskId, scheduleId) => { if (scheduleId) { removeScheduleBlock(scheduleId); } else { removeSchedule(taskId); } }}
           onAction={doTaskAction}
         />
       )}

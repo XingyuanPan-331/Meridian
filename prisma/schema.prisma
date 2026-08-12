@@ -195,6 +195,10 @@ model Schedule {
   scheduledStart DateTime
   scheduledEnd   DateTime?
   source         String   @default("manual")
+  // 2026-08-12 多段执行：每块（排期）独立出发/完成——一个任务分多个时间块完成，各块可单独
+  // 标记出发/完成（块级执行状态；Task.departureAt/completedAt 保留为最近聚合）
+  departureAt    DateTime?
+  completedAt    DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

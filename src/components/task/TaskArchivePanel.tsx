@@ -23,7 +23,8 @@ interface ArchiveTask {
   departureAt?: string | null;
   // V3 C7 档案聚合：+ancestors/+schedules/+accumStats/+aiFields
   ancestors?: string[];
-  schedules?: { id: string; scheduledStart: string; scheduledEnd: string | null; source: string }[];
+  // 2026-08-12 块级执行状态（每块独立出发/完成）
+  schedules?: { id: string; scheduledStart: string; scheduledEnd: string | null; source: string; departureAt?: string | null; completedAt?: string | null }[];
   accumStats?: { days?: number; streak?: number; targetLabel?: string } | null;
   aiFields?: { complexity?: string | null; riskLevel?: string | null; dependencies?: string | null; scheduleAdvice?: string | null };
   accumulate?: boolean; level?: string | null;
@@ -216,6 +217,20 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
       window.dispatchEvent(new CustomEvent("meridian-task-changed"));
     } catch { setSavedTip("操作失败，请重试"); }
     finally { setReopenBusy(false); }
+  };
+
+  // 2026-08-12 块级完成：将某个时间块标记为完成（多段执行——一个任务分多个时间块，各块独立完成）
+  const completeScheduleBlock = async (taskId: string, scheduleId: string) => {
+    try {
+      const r = await fetch(`/api/tasks/${taskId}/action`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete", scheduleId }),
+      });
+      if (!r.ok) return;
+      setSavedTip("时间块已完成 ✓");
+      loadTask();
+      window.dispatchEvent(new CustomEvent("meridian-task-changed"));
+    } catch { /* 忽略 */ }
   };
 
   // 删除任务（全站唯一删除入口；危险操作需确认；成功后关闭面板并广播刷新）
@@ -590,11 +605,26 @@ export function TaskArchivePanel({ taskId, seed, onClose }: {
           <Section num="3" name="时间" tag="唯一时间源 = Schedule" color="#f59e0b">
             <div className="space-y-1.5 mb-2.5 text-sm text-[var(--v2-text2)]">
               {task && task.schedules && task.schedules.length > 0 ? (
-                task.schedules.map((s) => (
-                  <div key={s.id} className="flex items-center gap-2"><span className="w-5 h-5 rounded bg-[var(--v2-brand-bg)] flex items-center justify-center text-[11px]">🕐</span>
-                    时间块 <b className="text-[var(--v2-text)]">{new Date(s.scheduledStart).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit" })}{s.scheduledEnd ? ` — ${new Date(s.scheduledEnd).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""}</b>
-                  </div>
-                ))
+                task.schedules.map((s) => {
+                  const sDone = !!s.completedAt;
+                  const sDep = s.departureAt ? new Date(s.departureAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : null;
+                  return (
+                    <div key={s.id} className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded bg-[var(--v2-brand-bg)] flex items-center justify-center text-[11px]">{sDone ? "✅" : "🕐"}</span>
+                      <span className={sDone ? "text-[var(--v2-text3)] line-through" : ""}>
+                        时间块 <b className="text-[var(--v2-text)]">{new Date(s.scheduledStart).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit" })}{s.scheduledEnd ? ` — ${new Date(s.scheduledEnd).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""}</b>
+                      </span>
+                      {/* 2026-08-12 块级状态：出发时间 + 完成标记（多段执行——每块独立出发/完成） */}
+                      <span className="text-[12px] text-[var(--v2-text3)] ml-auto">
+                        {sDone ? `已完${sDep ? ` · ${sDep} 出发` : ""}` : sDep ? `${sDep} 出发` : ""}
+                      </span>
+                      {!sDone && (
+                        <button onClick={() => { if (window.confirm("将该时间块标记为完成？")) { completeScheduleBlock(task!.id, s.id); } }}
+                          className="text-[12px] px-1.5 py-0.5 rounded border border-[var(--v2-border)] text-[var(--v2-text3)] hover:border-[var(--v2-brand)] hover:text-[var(--v2-brand)] transition">完成此块</button>
+                      )}
+                    </div>
+                  );
+                })
               ) : seed?.startTime ? (
                 <div className="flex items-center gap-2"><span className="w-5 h-5 rounded bg-[var(--v2-brand-bg)] flex items-center justify-center text-[11px]">🕐</span>
                   时间块 <b className="text-[var(--v2-text)]">{new Date(seed.startTime).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", minute: "2-digit" })}{seed.endTime ? ` — ${new Date(seed.endTime).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""}</b>

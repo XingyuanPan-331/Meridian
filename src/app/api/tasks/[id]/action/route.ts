@@ -38,8 +38,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const existing = await prisma.task.findFirst({ where: { id, userId: session.user.id } });
   if (!existing) return NextResponse.json({ error: "任务不存在" }, { status: 404 });
 
-  let action: string, snoozeUntil: string | undefined, postponeDays: number | undefined, rescheduleDate: string | undefined, reason: string | undefined, newStart: string | undefined, newEnd: string | undefined, durationMinutes: number | undefined, completedAt: string | undefined;
-  try { const body = await req.json(); action = body.action; snoozeUntil = body.snoozeUntil; postponeDays = body.postponeDays; rescheduleDate = body.rescheduleDate; reason = body.reason; newStart = body.newStart; newEnd = body.newEnd; durationMinutes = body.durationMinutes; completedAt = body.completedAt; } catch { return badRequest("请求格式错误"); }
+  let action: string, snoozeUntil: string | undefined, postponeDays: number | undefined, rescheduleDate: string | undefined, reason: string | undefined, newStart: string | undefined, newEnd: string | undefined, durationMinutes: number | undefined, completedAt: string | undefined, scheduleId: string | undefined;
+  try { const body = await req.json(); action = body.action; snoozeUntil = body.snoozeUntil; postponeDays = body.postponeDays; rescheduleDate = body.rescheduleDate; reason = body.reason; newStart = body.newStart; newEnd = body.newEnd; durationMinutes = body.durationMinutes; completedAt = body.completedAt; scheduleId = body.scheduleId; } catch { return badRequest("请求格式错误"); }
 
   const data: Record<string, unknown> = {};
   switch (action) {
@@ -67,8 +67,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
       // 任务已被并发操作（complete/cancel）置为终态 → 不覆盖，前端 load() 后自然展示终态
       if (startAffected === 0) return NextResponse.json({ started: false, reason: "already_finished" });
-      // 2026-08-12 多段执行：出发 = 打开一个新执行段（TimeLog type=segment）——任务可分段完成
-      // （如今天一段 + 明天一段），每段独立出发/结束/用时，总时长 = 各段之和
+      // 2026-08-12 多段执行：出发 = ①更新最近未完成排期的块级出发时间 ②打开一个新执行段
+      // （TimeLog type=segment）——任务可分段完成，每块独立出发/完成，总时长 = 各段之和
+      const targetSched = await prisma.schedule.findFirst({
+        where: { taskId: anchorId, userId: session.user.id, completedAt: null },
+        orderBy: { scheduledStart: "asc" },
+      });
+      if (targetSched) {
+        await prisma.schedule.update({ where: { id: targetSched.id }, data: { departureAt: new Date() } });
+      }
       prisma.timeLog.create({
         data: { userId: session.user.id, taskId: anchorId, type: "segment", startedAt: new Date(), detail: "start" },
       }).catch((e) => { console.error("[action] start 段记录失败:", e); });
@@ -99,7 +106,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         completeTime = new Date();
       }
       // 修复 P1-10：离开 snoozed 统一清 snoozeUntil
-      data.status = "completed"; data.completedAt = completeTime; data.snoozeUntil = null;
+      // 2026-08-12 多段执行（块级）：完成当前进行中的排期块（departureAt 有、completedAt 空）；
+      // 若还有未完成排期块 → 任务保持进行中（段完成 ≠ 任务完成）；全部完成（或无排期）→ 任务完成
+      // 2026-08-12 支持 scheduleId 指定块（档案面板"标记完成"某时段）；否则自动完成进行中的块
+      const anchorId3 = await resolveAnchorTask(session.user.id, id);
+      if (scheduleId) {
+        await prisma.schedule.update({
+          where: { id: scheduleId, userId: session.user.id, taskId: { in: [id, anchorId3] } },
+          data: { completedAt: completeTime, departureAt: completeTime }, // 手动标记完成：出发=完成时间（无出发记录时）
+        });
+      } else {
+        const openSched = await prisma.schedule.findFirst({
+          where: { taskId: id, userId: session.user.id, departureAt: { not: null }, completedAt: null },
+          orderBy: { scheduledStart: "asc" },
+        });
+        if (openSched) {
+          await prisma.schedule.update({ where: { id: openSched.id }, data: { completedAt: completeTime } });
+        }
+      }
+      const remainingScheds = await prisma.schedule.count({ where: { taskId: id, userId: session.user.id, completedAt: null } });
+      if (remainingScheds > 0) { data.status = "in_progress"; } else { data.status = "completed"; data.completedAt = completeTime; }
+      data.snoozeUntil = null;
       // 2026-08-12 多段执行：完成 = 结束当前进行中的段（endedAt + 时长）+ 总时长聚合（SUM 所有段/打卡）
       const anchorId2 = await resolveAnchorTask(session.user.id, id);
       const openSeg = await prisma.timeLog.findFirst({

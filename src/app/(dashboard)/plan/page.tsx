@@ -532,7 +532,16 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                   // V3 C6：直读落库 theme（无则 tags/标题推断兜底）
                   const theme = (t as SchedTask).theme ?? resolveTheme(t.tags, t.title, t.category);
                   const tm = `${String(st.getHours()).padStart(2, "0")}:${String(st.getMinutes()).padStart(2, "0")} - ${blockEnd ? new Date(blockEnd).toTimeString().slice(0, 5) : "--:--"}`;
-                  const ds = dur >= 1 ? `${Math.floor(dur)}h` : `${Math.round(dur * 60)}m`;
+                  // 2026-08-13 时长精确：2.5h → "2h30m"（原 floor 丢小数，P1(2) 150 分钟显示 2h）
+                  const fmtDur = (h: number) => {
+                    if (h >= 1) {
+                      const hh = Math.floor(h), mm = Math.round((h - hh) * 60);
+                      if (mm >= 60) return `${hh + 1}h`;
+                      return mm > 0 ? `${hh}h${mm}m` : `${hh}h`;
+                    }
+                    return `${Math.round(h * 60)}m`;
+                  };
+                  const ds = fmtDur(dur);
                   // 角标（设计稿 .tbr：AI 浅紫底靛蓝字 / 截止 浅红底红字 + 边框，绝对定位右上；两者同存时上下排）
                   const dlLabel = t.deadline ? (() => { const dl = new Date(t.deadline); return `${dl.getMonth() + 1}/${dl.getDate()} ${String(dl.getHours()).padStart(2, "0")}:${String(dl.getMinutes()).padStart(2, "0")}截止`; })() : null;
                   const dlShort = t.deadline ? (() => { const dl = new Date(t.deadline); return `${dl.getMonth() + 1}/${dl.getDate()}`; })() : null;
@@ -555,8 +564,8 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     if (vE <= vS) return null;
                     const top = (vS - S_eff) * H;
                     const hh = Math.max((vE - vS) * H, 22);
-                    // 2026-08-13 多段块：时长角标用段时长（块1 1h、块2 2h——非任务级总时长）
-                    const dsSeg = seg.len !== undefined ? (seg.len >= 1 ? `${Math.floor(seg.len)}h` : `${Math.round(seg.len * 60)}m`) : ds;
+                    // 2026-08-13 多段块：时长角标用段时长（块1 1h、块2 2h30m——非任务级总时长）
+                    const dsSeg = seg.len !== undefined ? fmtDur(seg.len) : ds;
                     const isEarlySeg = seg.s < S;            // 凌晨段（顶部 2-8）
                     const isLateSeg = seg.s >= S + TH;       // 深夜段（底部 22-2）
                     const isNightSeg = isEarlySeg || isLateSeg;

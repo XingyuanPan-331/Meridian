@@ -104,7 +104,7 @@ export async function createAccumulateSchedules(
  * 移动排期。默认删除该任务全部 schedule 后重建（单排期任务语义）。
  * 传入 targetScheduleId 时只替换目标那条（重复任务场景，修复：原实现会清空所有重复排期）。
  */
-export async function moveSchedule(userId: string, taskId: string, newStart: Date, newEnd: Date, targetScheduleId?: string): Promise<{ id: string; oldStart: string | null }> {
+export async function moveSchedule(userId: string, taskId: string, newStart: Date, newEnd: Date, targetScheduleId?: string, append = false): Promise<{ id: string; oldStart: string | null }> {
   // 锚点下沉：拖动容器上的（旧）排期 → 迁移到 task 锚点子级
   const effectiveTaskId = await resolveAnchorTask(userId, taskId);
   // 删除域用原始 taskId（历史 schedule 挂在容器上也能被正确移除）
@@ -113,7 +113,14 @@ export async function moveSchedule(userId: string, taskId: string, newStart: Dat
   const oldStart = oldSchedule?.scheduledStart.toISOString() || null;
 
   const schedule = await prisma.$transaction(async (tx) => {
-    await tx.schedule.deleteMany({ where: oldWhere });
+    // 2026-08-12 append 模式（添加时段）：保留旧排期，纯新增——同一任务多排期（如 P1 返工：
+    // 过去时段 + 新时段在日历各显示一块）；非 append 才清理/替换
+    if (!append) {
+      await tx.schedule.deleteMany({ where: oldWhere });
+      // 2026-08-13 修复：拖动带 scheduleId 只替换目标条，不再清空同任务其他排期——
+      // 多排期（添加时段/多段执行）是有意的，拖动一块不应让其他块消失（P2 拖动后两块变一块）；
+      // 意外重复由档案"删除块"手动清理
+    }
     // 下沉时清掉锚点旧排期，避免重复
     if (effectiveTaskId !== taskId) {
       await tx.schedule.deleteMany({ where: { taskId: effectiveTaskId, userId } });

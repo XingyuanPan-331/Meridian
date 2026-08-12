@@ -571,38 +571,30 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                     const isNightSeg = isEarlySeg || isLateSeg;
                     return (
                       <div key={`${t.id}:${si}`} className="plan-tsk absolute cursor-pointer hover:shadow-sm transition-shadow z-[1] overflow-hidden"
-                        style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: focus ? "8px 10px" : "7px 8px" }}
+                        style={{ top, height: hh, left: laneLeft, right: laneRight, borderRadius: "0 6px 6px 3px", borderLeft: `4px solid ${cs.color}`, background: cs.bg, padding: hh < 40 ? (focus ? "3px 6px" : "2px 6px") : (focus ? "8px 10px" : "7px 8px") }}
                         draggable
                         onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.effectAllowed = "copyMove"; }}
                         onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
                         title={`${seg.si ? `(${seg.si}) ` : ""}${t.title}\n${segTm(seg) ?? tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
-                        {/* B10：AI 徽章弱化（灰字小标；手动调整后 source→user 自动消失） */}
-                        {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
-                        {/* 深夜/凌晨段标记（跨段任务的段归属提示） */}
-                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
-                        {/* 标题：2026-08-10 多行换行（原单行 nowrap 截断——高卡片大量空白却只显示一行）；
-                            按卡高自适应：高卡最多 3 行、矮卡 2 行，充分利用卡片空间显示完整名字 */}
-                        <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (t.source === "ai" || isNightSeg) ? 30 : hh >= 32 && hh < 46 ? 26 : 0 }}>
-                          <div className="plan-tsk-title text-[15px]" style={{
-                            fontWeight: 600, lineHeight: 1.35, color: "#111827",
+                        {/* 2026-08-13 布局优化：序号独立右上角（不占标题位）；AI/深夜标记下移一行 */}
+                        {seg.si && <span className="absolute right-1.5 text-[11px] px-1 py-px rounded font-semibold text-[var(--v2-text2)] bg-white/80" style={{ top: 4, zIndex: 2 }}>{seg.si}</span>}
+                        {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: seg.si ? 20 : 4 }}>AI 建议</span>}
+                        {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: (seg.si || t.source === "ai") ? 20 : 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
+                        {/* 标题：矮块 1 行、高块 2-3 行；序号在右上角不挤压标题 */}
+                        <div className="flex items-center gap-1.5 min-w-0" style={{ paddingRight: (seg.si || t.source === "ai" || isNightSeg) ? 28 : 0 }}>
+                          <div className="plan-tsk-title" style={{
+                            fontSize: hh < 40 ? 12.5 : 15, fontWeight: 600, lineHeight: 1.35, color: "#111827",
                             display: "-webkit-box", WebkitBoxOrient: "vertical",
-                            WebkitLineClamp: hh >= 60 ? 3 : 2,
+                            WebkitLineClamp: hh >= 60 ? 3 : (hh >= 40 ? 2 : 1),
                             overflow: "hidden", wordBreak: "break-word",
                           }}>{t.title}</div>
-                          {/* 2026-08-13 段序号放标题后（不截断）——多段任务 (1)(2) 标识 */}
-                          {seg.si ? <span className="text-[12px] text-[var(--v2-text2)] shrink-0 font-semibold leading-none mt-px">{`(${seg.si})`}</span> : null}
                           {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
-                        {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}
-                        {hh >= 46 && (
-                          <div className="flex items-center justify-between gap-2 text-[13px] text-[var(--v2-text2)] tabular-nums mt-1 min-w-0">
-                            {/* 2026-08-13 多段块：显示段自身时段（块1 17:00-18:00、块2 19:58-21:56） */}
-                            <span className="truncate">{segTm(seg) ?? tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}截止</span>}</span>
-                            <span className="shrink-0">{dsSeg}</span>
-                          </div>
-                        )}
-                        {/* 时长角标（中矮块 32-46px：无时间行，右下角独立显示） */}
-                        {hh >= 32 && hh < 46 && <div className="absolute right-1.5 text-[13px] text-[var(--v2-text2)]" style={{ bottom: 4 }}>{dsSeg}</div>}
+                        {/* 时间行：任何块都显示（短任务不丢）——"开始-结束 · 总用时"同行；矮块小字号 */}
+                        <div className="flex items-center justify-between gap-2 text-[var(--v2-text2)] tabular-nums min-w-0" style={{ fontSize: hh < 40 ? 10 : 12, marginTop: hh < 40 ? 1 : 2 }}>
+                          <span className="truncate">{segTm(seg) ?? tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}</span>}</span>
+                          <span className="shrink-0">{dsSeg}</span>
+                        </div>
                         {/* B6：截断提示（跨夜/折叠分组） */}
                         {si === segs.length - 1 && foldedTip && <div className="absolute right-1.5 bottom-0.5 text-[11px] font-semibold text-[var(--v2-text3)]" style={{ background: cs.bg, padding: "0 3px" }}>⋯ 折叠区</div>}
                       </div>

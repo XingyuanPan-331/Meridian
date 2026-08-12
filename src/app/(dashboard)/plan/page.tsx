@@ -559,7 +559,9 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                             display: "-webkit-box", WebkitBoxOrient: "vertical",
                             WebkitLineClamp: hh >= 60 ? 3 : 2,
                             overflow: "hidden", wordBreak: "break-word",
-                          }}>{seg.si ? `(${seg.si}) ${t.title}` : t.title}</div>
+                          }}>{t.title}</div>
+                          {/* 2026-08-13 段序号放标题后（不截断）——多段任务 (1)(2) 标识 */}
+                          {seg.si ? <span className="text-[11px] text-[var(--v2-text3)] shrink-0 font-medium">{`(${seg.si})`}</span> : null}
                           {theme && <ThemeBadge theme={theme} mini={hh < 40} />}
                         </div>
                         {/* 时间行（高块：时间 + 时长同行右对齐，不再与右下角标贴叠） */}

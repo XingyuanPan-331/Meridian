@@ -577,8 +577,7 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                         onDragStart={(e) => { e.dataTransfer.setData("text/task-id", t.id); e.dataTransfer.setData("text/schedule-id", t.scheduleId ?? ""); e.dataTransfer.effectAllowed = "copyMove"; }}
                         onClick={(e) => { e.stopPropagation(); onTaskClick?.(t, { x: e.clientX, y: e.clientY }); }}
                         title={`${seg.si ? `(${seg.si}) ` : ""}${t.title}\n${segTm(seg) ?? tm} · ${cs.label}${theme ? ` · 主题：${theme}` : ""}\n${t.status === "completed" ? "已完成" : t.status === "in_progress" ? "进行中" : "未开始"}\n拖动可移动 · 点击查看详情`}>
-                        {/* 2026-08-13 布局优化：序号独立右下角（不占卡片宽度方向任何空间）；AI/深夜标记右上 */}
-                        {seg.si && <span className="absolute right-1 text-[11px] px-1 py-px rounded font-semibold text-[var(--v2-text2)] bg-white/80" style={{ bottom: 3, zIndex: 2 }}>{seg.si}</span>}
+                        {/* 2026-08-13 布局优化：序号并入时间行前缀（弱化+不重叠）；AI/深夜标记右上 */}
                         {t.source === "ai" && <span className="absolute right-1.5 text-[10px] px-1 py-px rounded font-medium leading-[16px] bg-[#f1f5f9] text-[var(--v2-text3)]" style={{ top: 4 }}>AI 建议</span>}
                         {isNightSeg && <span className="absolute right-1.5 text-[9.5px] px-1 py-px rounded font-medium bg-white/70 text-[var(--v2-text3)]" style={{ top: (t.source === "ai") ? 20 : 4, zIndex: 1 }}>{isEarlySeg ? "凌晨" : "深夜"}</span>}
                         {/* 标题：矮块 1 行、高块 2-3 行；序号在右下角不占标题宽度 */}
@@ -593,7 +592,11 @@ function WeekCalendar({ tasks, focus, weekStart, weekOffset, onTaskClick, onDrop
                         </div>
                         {/* 时间行：任何块都显示（短任务不丢）——"开始-结束 · 总用时"同行；矮块小字号 */}
                         <div className="flex items-center justify-between gap-2 text-[var(--v2-text2)] tabular-nums min-w-0" style={{ fontSize: hh < 40 ? 10 : 12, marginTop: hh < 40 ? 1 : 2 }}>
-                          <span className="truncate">{segTm(seg) ?? tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}</span>}</span>
+                          <span className="truncate">
+                            {/* 2026-08-13 序号并入时间行前缀：灰字小号降权、短任务不重叠（右下角徽章移除） */}
+                            {seg.si ? <span className="font-medium text-[var(--v2-text3)]">{`(${seg.si}) `}</span> : null}
+                            {segTm(seg) ?? tm}{dlShort && <span className="text-[var(--color-danger-text)] font-medium"> · {dlShort}</span>}
+                          </span>
                           <span className="shrink-0">{dsSeg}</span>
                         </div>
                         {/* B6：截断提示（跨夜/折叠分组） */}
